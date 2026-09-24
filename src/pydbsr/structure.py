@@ -60,6 +60,37 @@ class ConfigSpec:
     extra: dict = field(default_factory=dict)
 
 
+def _confs(spec: ConfigSpec) -> list[str]:
+    return [c.strip() for c in spec.conf.split(" + ")]
+
+
+def _csf_config(line: str) -> tuple:
+    """Non-relativistic occupations of a jj CSF line '  5s ( 2)  5p-( 2)  5p ( 4)'."""
+    occ: dict = {}
+    for n, l, q in re.findall(r"(\d+)([a-z])-?\s*\(\s*(\d+)\)", line):
+        key = (int(n), io.L_SYMBOLS.index(l))
+        occ[key] = occ.get(key, 0) + int(q)
+    return tuple(sorted((k, q) for k, q in occ.items() if q))
+
+
+def _dominant_config(sol, cf, confs: list[str]) -> str:
+    """Configuration (from ``confs``) with the largest weight in a solution."""
+    if len(confs) == 1:
+        return confs[0]
+    keys = {}
+    for c in confs:
+        keys[tuple(sorted(((n, l), q) for n, l, q in io.parse_config(c)))] = c
+    w: dict = {}
+    for k, c in enumerate(sol.coefs):
+        occ = _csf_config(cf.csfs[sol.ic1 - 1 + k][0])
+        # compare only the shells that appear in the candidate configurations
+        for key, name in keys.items():
+            shells = {sh for sh, _ in key}
+            if tuple(sorted((sh, q) for sh, q in occ if sh in shells)) == key:
+                w[name] = w.get(name, 0.0) + c * c
+    return max(w, key=w.get) if w else confs[0]
+
+
 def jj_subshells(n: int, l: int) -> str:
     """'6p' -> '6p-,6p': in DBSR notation 'nl' is j = l+1/2 only and 'nl-' is j = l-1/2."""
     nl = io.shell_name(n, l)
@@ -129,9 +160,14 @@ class Target:
     def core(self) -> str:
         return " ".join(self.core_shells)
 
-    def add(self, conf: str, name: str | None = None, varied: str | Sequence[str] | None = None,
+    def add(self, conf: str | Sequence[str], name: str | None = None,
+            varied: str | Sequence[str] | None = None,
             term: str = "LS", jj_varied: str = "none", ci: bool = False, **hf_args) -> ConfigSpec:
-        """Add a configuration (only peel shells, e.g. ``'5s2 5p4 6p'``).
+        """Add a configuration (only peel shells, e.g. ``'5s2 5p4 6p'``), or a list of
+        configurations of the same parity that are treated together, with
+        configuration interaction between them (e.g. ``['5s 5p6', '5s2 5p4 5d']``:
+        the strong 5s5p^6 - 5p^4 5d mixing in Xe II).  Each resulting state is
+        labelled with its dominant configuration.
 
         The first configuration is the reference: all its orbitals are
         optimised (``varied='all'``).  For the others, by default only the
@@ -145,11 +181,15 @@ class Target:
         initial estimate (states with a 6p1/2 electron then come out several
         eV too high).  Use 'nl-' explicitly to vary a single subshell.
         """
+        confs = [conf] if isinstance(conf, str) else list(conf)
         n_core = sum(2 * (2 * io.L_SYMBOLS.index(s[-1]) + 1) for s in self.core_shells)
-        n = n_core + io.config_nelectrons(conf)
-        if n != self.ion.nelc:
-            raise ValueError(f"{conf!r}: {n} electrons with the core, {self.ion} has {self.ion.nelc}")
-        name = name or _default_name(conf)
+        for c in confs:
+            n = n_core + io.config_nelectrons(c)
+            if n != self.ion.nelc:
+                raise ValueError(f"{c!r}: {n} electrons with the core, {self.ion} has {self.ion.nelc}")
+        if len({io.config_parity(c) for c in confs}) > 1:
+            raise ValueError(f"configurations {confs} have different parities")
+        name = name or "__".join(_default_name(c) for c in confs)
         if any(s.name == name for s in self.specs):
             raise ValueError(f"duplicate name {name!r}")
         ref = self.specs[0] if self.specs else None
@@ -157,14 +197,16 @@ class Target:
             if ref is None:
                 varied = "all"
             else:
-                ref_sh = {(n_, l) for n_, l, _ in io.parse_config(ref.conf)}
-                new = [(n_, l) for n_, l, _ in io.parse_config(conf) if (n_, l) not in ref_sh]
+                ref_sh = {(n_, l) for c in _confs(ref) for n_, l, _ in io.parse_config(c)}
+                new = []
+                for c in confs:
+                    new += [(n_, l) for n_, l, _ in io.parse_config(c) if (n_, l) not in ref_sh and (n_, l) not in new]
                 varied = ",".join(jj_subshells(n_, l) for n_, l in new) if new else "none"
         else:
             if not isinstance(varied, str):
                 varied = ",".join(varied)
             varied = expand_varied(varied)
-        spec = ConfigSpec(conf=io.pretty_conf(conf), name=name, varied=varied, term=term,
+        spec = ConfigSpec(conf=" + ".join(io.pretty_conf(c) for c in confs), name=name, varied=varied, term=term,
                           jj_varied=jj_varied, inp=None if ref is None else f"{ref.name}.bsw",
                           ci=ci, extra=hf_args)
         self.specs.append(spec)
@@ -172,15 +214,27 @@ class Target:
 
     # ------------------------------------------------------------------ runs
     def _hf_args(self, spec: ConfigSpec) -> list[str]:
-        peel = " ".join(io.shell_name(n, l) for n, l, _ in io.parse_config(spec.conf))
-        args = [spec.name, f"z={self.ion.z}", f"core={self.core}", f"peel={peel}",
-                f"conf={io.to_dbsr_conf(spec.conf)}", f"term={spec.term}",
-                f"varied={spec.varied}", f"max_it={self.max_it}"]
+        shells = []
+        for c in _confs(spec):
+            shells += [io.shell_name(n, l) for n, l, _ in io.parse_config(c) if io.shell_name(n, l) not in shells]
+        args = [spec.name, f"z={self.ion.z}", f"core={self.core}", f"peel={' '.join(shells)}",
+                f"term={spec.term}", f"varied={spec.varied}", f"max_it={self.max_it}"]
+        if len(_confs(spec)) == 1:
+            args.append(f"conf={io.to_dbsr_conf(spec.conf)}")
         if spec.inp:
             args.append(f"inp={spec.inp}")
         args += self._grid_args()
         args += [f"{k}={v}" for k, v in {**self.hf_args, **spec.extra}.items()]
         return args
+
+    def _write_ls(self, spec: ConfigSpec, path: Path):
+        """dbsr_hf input with several LS configurations (name.LS): atom, core in
+        4-character columns, one configuration per line, '*'."""
+        lines = [self.ion.symbol, "".join(f"{c:>4s}" for c in self.core_shells)]
+        for c in _confs(spec):
+            lines.append("".join(f"{io.shell_name(n, l):>4s}({q:2d})" for n, l, q in io.parse_config(c)))
+        lines.append("*")
+        path.write_text("\n".join(lines) + "\n")
 
     def _grid_args(self) -> list[str]:
         # dbsr_hf reads the grid from knot.dat or from the command line (not from name.knot)
@@ -196,6 +250,8 @@ class Target:
         sb.mkdir(parents=True)
         if spec.inp:
             shutil.copy(wd / spec.inp, sb / spec.inp)
+        if len(_confs(spec)) > 1:
+            self._write_ls(spec, sb / f"{spec.name}.LS")
         run("dbsr_hf", self._hf_args(spec), sb, echo=self.echo, log=f"{spec.name}.hf1.out")
         jj = [spec.name, "term=jj", f"varied={spec.jj_varied}", f"max_it={self.max_it}", *self._grid_args()]
         run("dbsr_hf", jj, sb, echo=self.echo, log=f"{spec.name}.hf2.out")
@@ -247,7 +303,8 @@ class Target:
                 count[two_j] = count.get(two_j, 0) + 1
                 name = f"{spec.name}_j{two_j}_{count[two_j]}"
                 io.write_state(spec.name, sol, cf, self.workdir / f"{spec.name}.bsw", self.workdir / name)
-                states.append(State(name, spec.conf, sol.label, two_j, parity, sol.energy, spec.name))
+                conf = _dominant_config(sol, cf, _confs(spec))
+                states.append(State(name, conf, sol.label, two_j, parity, sol.energy, spec.name))
         states.sort(key=lambda s: s.energy)
         return states
 
