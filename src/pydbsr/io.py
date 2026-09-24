@@ -69,7 +69,7 @@ class CFile:
 
     @classmethod
     def read(cls, path) -> "CFile":
-        lines = Path(path).read_text().splitlines()
+        lines = Path(path).read_text(encoding="latin-1").splitlines()
         energy = None
         head = lines[0]
         if len(head) > 15 and head[15:].strip():
@@ -112,7 +112,7 @@ class Solution:
 
 def read_j(path) -> list[Solution]:
     """Solutions of a DBSR .j file (dbsr_hf, dbsr_ci, dbsr_mchf)."""
-    text = Path(path).read_text()
+    text = Path(path).read_text(encoding="latin-1")
     if "Solutions:" not in text:
         raise ValueError(f"{path}: no 'Solutions:' section")
     lines = text.split("Solutions:", 1)[1].splitlines()
@@ -219,7 +219,7 @@ class TargetJJ:
 
     @classmethod
     def read(cls, path="target_jj") -> "TargetJJ":
-        lines = Path(path).read_text().splitlines()
+        lines = Path(path).read_text(encoding="latin-1").splitlines()
         title = lines[0]
         par = {}
         for line in lines:
@@ -318,7 +318,7 @@ def modify_knot(src, dst, **params):
     The tabulated grid points are dropped: with ``grid_type = 1`` the
     programs rebuild the grid from the parameters.
     """
-    lines = Path(src).read_text().splitlines()
+    lines = Path(src).read_text(encoding="latin-1").splitlines()
     out, seen = [], set()
     for line in lines:
         if line.startswith("grid points"):
@@ -340,7 +340,7 @@ def modify_knot(src, dst, **params):
 
 def read_knot(path) -> dict:
     out = {}
-    for line in Path(path).read_text().splitlines():
+    for line in Path(path).read_text(encoding="latin-1").splitlines():
         m = re.match(r"^\s*(\w+)\s*=\s*([-+\d.EeDd]+)", line)
         if m:
             try:

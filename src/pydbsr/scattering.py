@@ -210,7 +210,7 @@ class Scattering:
     def wave_sizes(self) -> list[dict]:
         """Estimated size of every partial wave after dbsr_conf3: channels, matrix
         dimension and memory (GB) for dbsr_mat3 / dbsr_hd3."""
-        text = (self.workdir / "target_jj").read_text()
+        text = (self.workdir / "target_jj").read_text(encoding="latin-1")
         nch = {int(m.group(1)): (int(m.group(2)), int(m.group(3)))
                for m in re.finditer(r"^\s*(\d+)\.\s+nch\s*=\s*(\d+)\s+nc\s*=\s*(\d+)", text, re.M)}
         ns = int(io.read_knot(self.workdir / "knot.dat").get("ns", 150))
@@ -343,7 +343,7 @@ class Scattering:
         names = [t.name for t in self.target_table().states]
         thr = self.workdir / "thresholds"
         if self.exp_energies and thr.exists():
-            e = [float(x) for x in thr.read_text().split()[:len(names)]]
+            e = [float(x) for x in thr.read_text(encoding="latin-1").split()[:len(names)]]
             names = [n for _, _, n in sorted(zip(e, range(len(names)), names))]
         return names
 
@@ -362,7 +362,7 @@ class Scattering:
 
 def read_dbound_tab(path) -> list[dict]:
     out = []
-    for line in Path(path).read_text().splitlines():
+    for line in Path(path).read_text(encoding="latin-1").splitlines():
         f = line.split()
         if len(f) >= 12 and f[0].isdigit() and f[1].isdigit():
             out.append(dict(klsp=int(f[0]), sol=int(f[1]), label=f[2], two_j=int(f[3]), parity=int(f[4]),
