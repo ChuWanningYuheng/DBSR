@@ -220,7 +220,7 @@ class Scattering:
             khm = n * max(ns - 6, 1) + nc
             full = khm * khm * 8 / 1e9                     # one dense matrix, GB
             out.append(dict(klsp=k, two_j=self.partial_waves[k - 1][0], parity=self.partial_waves[k - 1][1],
-                            nch=n, khm=khm, mat_gb=1.0 + 1.0 * full, hd_gb=1.0 + 2.6 * full,
+                            nch=n, khm=khm, mat_gb=1.0 + 0.3 * full, hd_gb=1.0 + 2.6 * full,
                             disk_gb=0.5 * full))
         return out
 
