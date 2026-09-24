@@ -1,0 +1,46 @@
+[build-system]
+requires = ["scikit-build-core>=0.9"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pydbsr"
+version = "0.1.0"
+description = "Python interface to the DBSR Dirac B-spline R-matrix codes: target structure, inner region, outer region, cross sections"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT (Python layer); DBSR Fortran sources: see README" }
+authors = [{ name = "pydbsr contributors" }]
+keywords = ["atomic physics", "R-matrix", "electron scattering", "DBSR", "cross sections"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Fortran",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+]
+dependencies = ["numpy>=1.21", "scipy>=1.7", "mpmath>=1.2"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+plot = ["matplotlib"]
+
+[project.scripts]
+pydbsr = "pydbsr.cli:main"
+
+[project.urls]
+Source = "https://github.com/chuwanningyuheng/dbsr"
+"DBSR upstream" = "https://github.com/zatsaroi/DBSR3"
+
+[tool.scikit-build]
+minimum-version = "0.9"
+cmake.version = ">=3.18"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["src/pydbsr"]
+sdist.exclude = ["build", "upstream/**/*.pdf", "upstream/**/*_example"]
+
+[tool.scikit-build.cmake.define]
+DBSR_BUILD_UTILS = "ON"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: end-to-end runs of the DBSR programs (about a minute)"]

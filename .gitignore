@@ -1,0 +1,9 @@
+*.egg-info/
+*.pyc
+*.so
+.pytest_cache/
+/upstream/
+__pycache__/
+_skbuild/
+build/
+dist/

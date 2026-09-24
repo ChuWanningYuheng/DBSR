@@ -1,0 +1,56 @@
+{% set pyproject = load_file_data("pyproject.toml") %}
+{% set version = pyproject["project"]["version"] %}
+
+package:
+  name: pydbsr
+  version: {{ version }}
+
+source:
+  path: ..
+
+build:
+  number: 0
+  skip: true  # [win]
+  script_env:
+    - DBSR_UPSTREAM_DIR
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  entry_points:
+    - pydbsr = pydbsr.cli:main
+
+requirements:
+  build:
+    - {{ compiler('fortran') }}
+    - {{ compiler('c') }}
+    - cmake >=3.18
+    - ninja
+    - git
+  host:
+    - python
+    - pip
+    - scikit-build-core >=0.9
+    - libblas
+    - liblapack
+  run:
+    - python
+    - numpy >=1.21
+    - scipy >=1.7
+    - mpmath >=1.2
+
+test:
+  imports:
+    - pydbsr
+  commands:
+    - pydbsr info
+    - test -x $SP_DIR/pydbsr/bin/dbsr_hf
+    - test -x $SP_DIR/pydbsr/bin/dbsr_mat3
+
+about:
+  home: https://github.com/chuwanningyuheng/dbsr
+  summary: Python interface to the DBSR Dirac B-spline R-matrix codes (O. Zatsarinny)
+  description: |
+    Builds the DBSR3 programs, libraries and utilities of O. Zatsarinny and
+    provides a Python API for target structure (dbsr_hf), the inner region
+    (dbsr_prep3 ... dbsr_hd3, parallel over partial waves), NIST thresholds
+    and an outer region (K-matrices, collision strengths, cross sections).
+  license: MIT
+  license_file: LICENSE

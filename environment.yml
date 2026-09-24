@@ -1,0 +1,21 @@
+# conda env create -f environment.yml && conda activate pydbsr && pip install .
+name: pydbsr
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.9
+  - fortran-compiler
+  - c-compiler
+  - cmake>=3.18
+  - ninja
+  - git
+  - libblas
+  - liblapack
+  - openblas
+  - numpy
+  - scipy
+  - mpmath
+  - matplotlib
+  - pytest
+  - pip
+  - scikit-build-core>=0.9

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.9", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Fortran compiler and LAPACK
+        run: sudo apt-get update && sudo apt-get install -y gfortran liblapack-dev libopenblas-dev
+      - name: Build and install
+        run: |
+          python -m pip install --upgrade pip
+          CMAKE_BUILD_PARALLEL_LEVEL=4 pip install ".[test]" -v
+      - name: Info
+        run: pydbsr info
+      - name: Tests
+        run: cd /tmp && python -m pytest -v $GITHUB_WORKSPACE/tests
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fortran compiler
+        run: brew install gcc openblas
+      - name: Build and install
+        run: |
+          export FC=$(ls /opt/homebrew/bin/gfortran-* | head -1)
+          CMAKE_ARGS="-DBLA_VENDOR=OpenBLAS -DCMAKE_PREFIX_PATH=$(brew --prefix openblas)" \
+            CMAKE_BUILD_PARALLEL_LEVEL=4 pip install ".[test]" -v
+      - name: Tests
+        run: cd /tmp && python -m pytest -v $GITHUB_WORKSPACE/tests
