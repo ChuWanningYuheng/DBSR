@@ -22,6 +22,7 @@ from . import io
 from .atoms import Ion
 
 ASD_URL = "https://physics.nist.gov/cgi-bin/ASD/energy1.pl"
+LINES_URL = "https://physics.nist.gov/cgi-bin/ASD/lines1.pl"
 
 
 @dataclass
@@ -296,3 +297,165 @@ def assign(states, levels: Sequence[Level] | str | Ion, overwrite: bool = True,
         warnings.warn(f"no NIST level found for {len(missing)} state(s): {', '.join(missing[:10])}"
                       + (" ..." if len(missing) > 10 else ""))
     return result
+
+
+# ---------------------------------------------------------------------------
+# CSV export of levels
+# ---------------------------------------------------------------------------
+def save_levels_csv(levels: Sequence[Level], path) -> Path:
+    """Write levels as CSV (No, Configuration, Term, J, Level (cm-1), Level (eV)).
+    The file can be read back with :func:`read_levels`."""
+    path = Path(path)
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["No", "Configuration", "Term", "J", "Level (cm-1)", "Level (eV)"])
+        for lv in sorted(levels, key=lambda l: (l.no or 0, l.energy_cm)):
+            j = f"{lv.two_j}/2" if lv.two_j % 2 else str(lv.two_j // 2)
+            w.writerow([lv.no, lv.config, lv.term, j, f"{lv.energy_cm:.3f}", f"{lv.energy_cm / 8065.543937:.6f}"])
+    return path
+
+
+def download_levels_csv(spectrum: str | Ion, path=None, **kw) -> Path:
+    """Download the NIST levels of ``spectrum`` and save them as a clean CSV."""
+    if isinstance(spectrum, Ion):
+        spectrum = spectrum.spectrum
+    path = path or (spectrum.replace(" ", "_") + "_levels.csv")
+    return save_levels_csv(fetch_levels(spectrum, **kw), path)
+
+
+# ---------------------------------------------------------------------------
+# spectral lines (to identify the levels behind observed lines)
+# ---------------------------------------------------------------------------
+@dataclass
+class Line:
+    wavelength_nm: float          # air wavelength for 200-2000 nm, as given by NIST
+    intensity: str
+    aki: float | None             # s^-1
+    ei_cm: float | None
+    ek_cm: float | None
+    conf_i: str
+    term_i: str
+    j_i: str
+    conf_k: str
+    term_k: str
+    j_k: str
+
+    def __str__(self):
+        a = f"{self.aki:.3e}" if self.aki else "-"
+        return (f"{self.wavelength_nm:10.4f} nm  I={self.intensity:<6s} A={a:<10s} "
+                f"{self.conf_i} {self.term_i} {self.j_i}  ->  {self.conf_k} {self.term_k} {self.j_k}"
+                f"   (Ek = {self.ek_cm} cm-1)")
+
+
+def _num(x):
+    try:
+        return float(re.sub(r"[^0-9eE+\-.]", "", _clean(x)))
+    except ValueError:
+        return None
+
+
+def parse_lines(text: str) -> list[Line]:
+    """NIST ASD lines output (CSV or tab, also inside HTML)."""
+    if re.search(r"<\s*(html|body|pre|table|!doctype)", text[:5000], re.I):
+        text = _strip_html(text)
+    lines = [l for l in text.splitlines() if l.strip()]
+    hi = next((i for i, l in enumerate(lines) if "wl" in l.lower() and "conf" in l.lower()), None)
+    if hi is None:
+        return []
+    delim = "\t" if "\t" in lines[hi] else ","
+    rows = list(csv.reader(_io.StringIO("\n".join(lines[hi:])), delimiter=delim))
+    head = [_clean(h).lower() for h in rows[0]]
+
+    def col(*names):
+        for n in names:
+            for i, h in enumerate(head):
+                if h.startswith(n):
+                    return i
+        return None
+    iw = col("obs_wl", "ritz_wl", "calc_wl")
+    iw2 = col("ritz_wl", "calc_wl")
+    idx = dict(intens=col("intens"), aki=col("aki"), ei=col("ei"), ek=col("ek"),
+               ci=col("conf_i"), ti=col("term_i"), ji=col("j_i"), ck=col("conf_k"), tk=col("term_k"),
+               jk=col("j_k"))
+    get = lambda r, k: _clean(r[idx[k]]) if idx[k] is not None and idx[k] < len(r) else ""
+    out = []
+    for r in rows[1:]:
+        if iw is None or len(r) <= iw:
+            continue
+        w = _num(r[iw])
+        if w is None and iw2 is not None and iw2 < len(r):
+            w = _num(r[iw2])
+        if w is None:
+            continue
+        out.append(Line(w, get(r, "intens"), _num(get(r, "aki")) if get(r, "aki") else None,
+                        _num(get(r, "ei")), _num(get(r, "ek")), get(r, "ci"), get(r, "ti"), get(r, "ji"),
+                        get(r, "ck"), get(r, "tk"), get(r, "jk")))
+    return out
+
+
+def fetch_lines(spectrum: str | Ion, wmin_nm: float, wmax_nm: float, timeout: float = 60) -> list[Line]:
+    """Lines of ``spectrum`` between ``wmin_nm`` and ``wmax_nm`` (air wavelengths above
+    200 nm) with the lower (i) and upper (k) levels.  Uses the NIST ASD lines form;
+    falls back to astroquery.nist if that is installed."""
+    if isinstance(spectrum, Ion):
+        spectrum = spectrum.spectrum
+    params = {
+        "spectra": spectrum, "limits_type": "0", "low_w": str(wmin_nm), "upp_w": str(wmax_nm),
+        "unit": "1", "de": "0", "format": "2", "line_out": "0", "en_unit": "0", "output": "0",
+        "bibrefs": "0", "page_size": "15", "show_obs_wl": "1", "show_calc_wl": "1",
+        "unc_out": "0", "order_out": "0", "max_low_enrg": "", "show_av": "2", "max_upp_enrg": "",
+        "tsb_value": "0", "min_str": "", "A_out": "0", "intens_out": "on", "max_str": "",
+        "allowed_out": "1", "forbid_out": "1", "min_accur": "", "min_intens": "", "conf_out": "on",
+        "term_out": "on", "enrg_out": "on", "J_out": "on", "submit": "Retrieve Data",
+    }
+    err = ""
+    try:
+        req = urllib.request.Request(LINES_URL + "?" + urllib.parse.urlencode(params),
+                                     headers={"User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            text = r.read().decode("utf-8", errors="replace")
+        out = parse_lines(text)
+        if out:
+            return out
+        err = _snippet(text)
+    except OSError as e:
+        err = str(e)
+    try:                                            # optional fallback
+        import astropy.units as u
+        from astroquery.nist import Nist
+        tab = Nist.query(wmin_nm * u.nm, wmax_nm * u.nm, linename=spectrum, wavelength_type="vac+air")
+        out = []
+        for row in tab:
+            w = _num(str(row["Observed"])) or _num(str(row["Ritz"]))
+            if w is None:
+                continue
+            ei, ek = (str(row["Ei           Ek"]).split("-") + [""])[:2] if "Ei           Ek" in tab.colnames \
+                else ("", "")
+            out.append(Line(w, str(row["Rel."]), _num(str(row["Aki"])), _num(ei), _num(ek),
+                            str(row["Lower level"]), "", "", str(row["Upper level"]), "", ""))
+        if out:
+            return out
+    except Exception as e:                           # astroquery missing or failed
+        err += f"; astroquery: {e}"
+    raise RuntimeError(f"no NIST lines for {spectrum!r} in {wmin_nm}-{wmax_nm} nm: {err}\n"
+                       "Download by hand: https://physics.nist.gov/PhysRefData/ASD/lines_form.html "
+                       "(Format output: CSV) and use pydbsr.nist.read_lines('file.csv').")
+
+
+def read_lines(path) -> list[Line]:
+    return parse_lines(Path(path).read_text())
+
+
+def upper_levels(lines_: Sequence[Line], levels: Sequence[Level], tol_cm: float = 1.0) -> list[tuple]:
+    """Match the upper (k) level of each line to the level table: [(line, Level or None)]."""
+    out = []
+    for ln in lines_:
+        best = None
+        if ln.ek_cm is not None:
+            cand = [lv for lv in levels if abs(lv.energy_cm - ln.ek_cm) <= tol_cm]
+            if ln.j_k:
+                tj = _parse_j(ln.j_k)
+                cand = [lv for lv in cand if not tj or lv.two_j in tj] or cand
+            best = min(cand, key=lambda lv: abs(lv.energy_cm - ln.ek_cm)) if cand else None
+        out.append((ln, best))
+    return out
