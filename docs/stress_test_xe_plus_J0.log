@@ -1,0 +1,70 @@
+pydbsr 0.1.0; DBSR programs: build; python 3.11.15; numpy 2.4.6
+=== 1. Dirac equation: hydrogen-like Xe53+ (point nucleus, no QED)
+  [PASS] 1s: point nucleus used: 
+  [PASS] 1s energy vs exact Dirac: DBSR -1519.47333468  exact -1519.47334280  rel.err 5.3e-09
+  [PASS] 1s normalisation: |1 - int(P^2+Q^2)| = 5.1e-07
+  [PASS] 1s P(a)=Q(a)=0: P,Q at r=0.48: 0.0e+00, 0.0e+00
+  [PASS] 1s small/large component ratio Q/P: exact -0.2053358, max dev 7.1e-08 over r in [1.0e-03, 0.23]
+    (r < 1e-3 a0, point-nucleus singularity: max dev of Q/P 1.2e-03; finite nuclei are regular)
+  [PASS] 2p: point nucleus used: 
+  [PASS] 2p- energy vs exact Dirac: DBSR -383.79016182  exact -383.79016182  rel.err 4.2e-12
+  [PASS] 2p- normalisation: |1 - int(P^2+Q^2)| = 5.1e-07
+  [PASS] 2p- P(a)=Q(a)=0: P,Q at r=1.15: 0.0e+00, 0.0e+00
+  [PASS] 2p energy vs exact Dirac: DBSR -368.10786986  exact -368.10786986  rel.err 1.7e-13
+  [PASS] 2p normalisation: |1 - int(P^2+Q^2)| = 5.1e-07
+  [PASS] 2p P(a)=Q(a)=0: P,Q at r=1.15: 0.0e+00, 0.0e+00
+  [PASS] 2p small/large component ratio Q/P: exact -0.0994894, max dev 2.5e-07 over r in [1.0e-03, 0.54]
+    (r < 1e-3 a0, point-nucleus singularity: max dev of Q/P 5.3e-09; finite nuclei are regular)
+=== 2. Xe+ target orbitals and fine structure (corr5)
+    Hamiltonian: Dirac-Coulomb, nucleus = Fermi, mbreit = 0 (no Breit, no QED); core 1s   2s   2p-  2p   3s   3p-  3p   3d-  3d   4s   4p-  4p   4d-  4d
+  [PASS] finite (Fermi) nuclear charge distribution in the target: Fermi
+  [PASS] reference orbitals normalised: 17 orbitals, max |1-N| = 1.8e-06
+  [PASS] orbitals vanish at the R-matrix boundary: r_max(orbital) <= 20.79
+  [PASS] kinetic balance Q = (P' + kappa P/r)/2c of valence orbitals (r > 0.5): max relative L2 deviation 4.8e-04 (expected O((e-V)/2c^2))
+    inner-shell spin-orbit: e(2p1/2) - e(2p3/2) = -11.975 a.u.; e(1s) = -1277.632 a.u.
+  [PASS] inner-shell spin-orbit splitting from the Dirac equation: 325.9 eV
+  [PASS] 5p5 2P1/2 - 2P3/2 splitting (ab initio) vs NIST: 10772 cm-1 vs 10537 cm-1 (2.2 %)
+  [PASS] fine structure converged w.r.t. the B-spline grid (hi 0.25 -> 0.05): 10774.2 vs 10774.2 cm-1; E_tot -7446.484805 vs -7446.484805 a.u.
+=== 3. Coulomb functions for the matching (COULFG (Fortran))
+  [PASS] F, G, F', G' finite: 2024 points, l <= 60, eta in [-150.0, -0.001], rho in [0.10, 398], 5.7 s
+  [PASS] Wronskian F'G - FG' = 1: max |W - 1| = 1.8e-14
+  [PASS] agreement with mpmath (60 random points): max rel. diff 2.9e-13
+=== 4. Outer region (corr5_scat)
+    2 partial waves, 67 target states, a = 50.323364880174374 a0, z = 1, b = 0.0
+  [PASS] 2J=0+: long-range coupling C_lambda symmetric: max |C - C^T| = 0.0e+00
+  [PASS] 2J=0+: l consistent with kappa: 
+  [PASS] 2J=0+: channel set complete: 67 channels, expected 67; missing [] extra []
+  [PASS] 2J=0+: R-matrix poles / amplitudes finite: 10258 poles in [-7446.931, 143702708.1] a.u.
+  [PASS] 2J=0-: long-range coupling C_lambda symmetric: max |C - C^T| = 0.0e+00
+  [PASS] 2J=0-: l consistent with kappa: 
+  [PASS] 2J=0-: channel set complete: 67 channels, expected 67; missing [] extra []
+  [PASS] 2J=0-: R-matrix poles / amplitudes finite: 10273 poles in [-7446.586, 143702708.2] a.u.
+  [PASS] no negative-energy Dirac states among the R-matrix poles: lowest pole -7446.9313 a.u. (negative continuum would be near -2c^2 = -37558)
+  [PASS] lowest 2J=0+ pole = Xe 5p6 1S0 bound state: ionisation energy of Xe: 12.144 eV vs NIST 12.1298 eV
+  [PASS] K-matrix symmetric before symmetrisation (flux conservation): max |K - K^T| / max(1,|K|) = 2.1e-12 over 790 K-matrices (621 s), incl. E = thresholds, +-1e-12
+  [PASS] S-matrix unitary: max |S^+S - 1| = 4.5e-13
+  [PASS] |T|^2 <= 4 (unitarity bound): max |T|^2 = 3.8841
+  [PASS] |T|^2 continuous at every threshold (no jump beyond the local slope): max (|T(E_t)-T(E_t+d)| - |T(E_t+d)-T(E_t+2d)|)/max T = 2.6e-07, d = 1e-09 a.u., 66 thresholds
+  [PASS] Omega finite and >= 0: min 0.00e+00, max 3.734
+  [PASS] Omega_ij = Omega_ji (detailed balance): 
+  [PASS] parallel run reproduces serial run: 
+  [PASS] sigma: NaN below threshold only, no inf: 
+    relativistic vs non-relativistic matching at E <= 59 eV: sum|T|^2 changes by 2.4e-03, weak elements by up to 7.9e-02 (used: relativistic)
+  [PASS] long-range propagation a -> 2a -> 4a converges: sum|T|^2 change a->2a 8.5e-04, 2a->4a 1.5e-04
+  [PASS] closed-channel log-derivative finite at the turning point: -0.0586
+=== 5. Inner-region matrices dbsr_mat.nnn (corr5_scat)
+  [PASS] dbsr_mat.001: only lower-triangle blocks stored (H, S symmetric by construction): khm = 10258, 67 channels
+  [PASS] dbsr_mat.001: all matrix elements finite: 
+  [PASS] dbsr_mat.001: overlap matrix positive definite (no linear dependence): lowest eigenvalue of S = 1.51e-02 (124 s)
+  [PASS] dbsr_mat.002: only lower-triangle blocks stored (H, S symmetric by construction): khm = 10273, 67 channels
+  [PASS] dbsr_mat.002: all matrix elements finite: 
+  [PASS] dbsr_mat.002: overlap matrix positive definite (no linear dependence): lowest eigenvalue of S = 1.00e-05 (125 s)
+=== 6. Target states as seen by dbsr_mat3 (corr5_scat)
+  [PASS] target states do not interact: max |<i|H|j>|: 0.00e+00 a.u. (0.000 eV) between 0 and 0
+  [PASS] target states orthogonal: max |<i|j>|: 0.0e+00 (0, 0)
+=== 7. Library robustness
+  [PASS] timeout kills the program and its children: 1.3 s, leftover processes: []
+  [PASS] 'STOP ...' from a DBSR program raises DBSRError: 
+  [PASS] unit tests pass with warnings as errors: 33 passed, 1 skipped, 1 deselected in 2.17s
+54 checks, 54 passed, 0 failed (1623 s)
+rc=0
