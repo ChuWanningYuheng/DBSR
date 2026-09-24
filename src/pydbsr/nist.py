@@ -261,25 +261,39 @@ def assign(states, levels: Sequence[Level] | str | Ion, overwrite: bool = True,
     """Assign NIST levels to computed states.
 
     States and levels are grouped by (open-shell configuration, J, parity) and
-    matched in energy order within each group.  Sets ``state.exp_energy_cm``
-    (relative to the lowest assigned level of the table) and ``state.nist_label``.
+    matched in energy order within each group.  States from a calculation with
+    several interacting configurations (``State.configs``) form one group with
+    the levels of all those configurations, because their dominant
+    configuration may differ from the NIST designation.  Sets
+    ``state.exp_energy_cm``, ``state.nist_label`` and ``state.nist_no``.
     Returns a list of (state, level or None).
     """
     if isinstance(levels, (str, Ion)):
         levels = fetch_levels(levels)
+
+    def oshell(sh: dict) -> frozenset:
+        return frozenset(_open_shells(sh).items())
+
+    # configuration groups: each CI calculation forms one group
+    group_of: dict = {}
+    for s in states:
+        confs = getattr(s, "configs", None) or ([s.config] if s.config else [])
+        g = frozenset(oshell({(n, l): q for n, l, q in io.parse_config(c)}) for c in confs)
+        for c in g:
+            group_of.setdefault(c, g)
     groups: dict = {}
     for lv in levels:
-        key = (frozenset(_open_shells(lv.shells()).items()), lv.two_j, lv.parity)
-        groups.setdefault(key, []).append(lv)
+        g = group_of.get(oshell(lv.shells()))
+        if g is not None:
+            groups.setdefault((g, lv.two_j, lv.parity), []).append(lv)
     for g in groups.values():
         g.sort(key=lambda lv: lv.energy_cm)
     sgroups: dict = {}
     for s in states:
         if not s.config:
             continue
-        sh = {(n, l): q for n, l, q in io.parse_config(s.config)}
-        key = (frozenset(_open_shells(sh).items()), s.two_j, s.parity)
-        sgroups.setdefault(key, []).append(s)
+        g = group_of[oshell({(n, l): q for n, l, q in io.parse_config(s.config)})]
+        sgroups.setdefault((g, s.two_j, s.parity), []).append(s)
     result = []
     for key, sts in sgroups.items():
         sts.sort(key=lambda s: s.energy)

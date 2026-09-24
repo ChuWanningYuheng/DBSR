@@ -30,6 +30,7 @@ class State:
     exp_energy_cm: float | None = None   # experimental excitation energy (cm-1), e.g. NIST
     nist_label: str | None = None
     nist_no: int | None = None           # NIST level number (increasing energy)
+    configs: list | None = None          # all configurations of its (CI) calculation
 
     @property
     def J(self) -> float:
@@ -304,7 +305,8 @@ class Target:
                 name = f"{spec.name}_j{two_j}_{count[two_j]}"
                 io.write_state(spec.name, sol, cf, self.workdir / f"{spec.name}.bsw", self.workdir / name)
                 conf = _dominant_config(sol, cf, _confs(spec))
-                states.append(State(name, conf, sol.label, two_j, parity, sol.energy, spec.name))
+                states.append(State(name, conf, sol.label, two_j, parity, sol.energy, spec.name,
+                                    configs=_confs(spec) if len(_confs(spec)) > 1 else None))
         states.sort(key=lambda s: s.energy)
         return states
 
