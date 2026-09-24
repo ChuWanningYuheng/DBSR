@@ -23,6 +23,7 @@ dependencies = ["numpy>=1.21", "scipy>=1.7", "mpmath>=1.2"]
 [project.optional-dependencies]
 test = ["pytest>=7"]
 plot = ["matplotlib"]
+nist = ["ASDCache>=0.2", "openpyxl"]
 
 [project.scripts]
 pydbsr = "pydbsr.cli:main"

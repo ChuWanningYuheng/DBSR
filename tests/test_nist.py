@@ -80,3 +80,25 @@ def test_levels_csv_roundtrip(tmp_path):
     lv2 = nist.read_levels(p)
     key = lambda x: (x.no, x.config, x.two_j, x.energy_cm)
     assert sorted(map(key, lv)) == sorted(map(key, lv2))
+
+
+def test_fetch_lines_via_asdcache(monkeypatch):
+    pd = __import__("pytest").importorskip("pandas")
+    import sys
+    import types
+
+    df = pd.DataFrame({
+        "obs_wl_air(nm)": [474.9, float("nan")], "ritz_wl_air(nm)": [474.9001, 478.1],
+        "intens": ["500", ""], "Aki(s^-1)": [2.0e7, float("nan")], "Ei(cm-1)": [10000.0, 10100.0],
+        "Ek(cm-1)": [31050.0, 31016.0], "conf_i": ["a", "a"], "term_i": ["5S*", "5S*"], "J_i": ["2", "2"],
+        "conf_k": ["b", "b"], "term_k": ["5P", "5P"], "J_k": ["3", "1"]})
+
+    class FakeCache:
+        def fetch(self, species, wl_range=(170, 1000)):
+            assert species == "Xe III" and wl_range == (474.0, 479.0)
+            return df
+
+    monkeypatch.setitem(sys.modules, "ASDCache", types.SimpleNamespace(SpectraCache=FakeCache))
+    ln = nist.fetch_lines("Xe III", 474.0, 479.0)
+    assert [round(x.wavelength_nm, 4) for x in ln] == [474.9, 478.1]
+    assert ln[0].aki == 2.0e7 and ln[1].aki is None and ln[1].ek_cm == 31016.0 and ln[1].j_k == "1"

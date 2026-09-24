@@ -372,8 +372,8 @@ def parse_lines(text: str) -> list[Line]:
                 if h.startswith(n):
                     return i
         return None
-    iw = col("obs_wl", "ritz_wl", "calc_wl")
-    iw2 = col("ritz_wl", "calc_wl")
+    iw = col("obs_wl_air", "obs_wl", "ritz_wl_air", "ritz_wl", "calc_wl")
+    iw2 = col("ritz_wl_air", "ritz_wl", "calc_wl")
     idx = dict(intens=col("intens"), aki=col("aki"), ei=col("ei"), ek=col("ek"),
                ci=col("conf_i"), ti=col("term_i"), ji=col("j_i"), ck=col("conf_k"), tk=col("term_k"),
                jk=col("j_k"))
@@ -393,22 +393,59 @@ def parse_lines(text: str) -> list[Line]:
     return out
 
 
-def fetch_lines(spectrum: str | Ion, wmin_nm: float, wmax_nm: float, timeout: float = 60) -> list[Line]:
-    """Lines of ``spectrum`` between ``wmin_nm`` and ``wmax_nm`` (air wavelengths above
-    200 nm) with the lower (i) and upper (k) levels.  Uses the NIST ASD lines form;
-    falls back to astroquery.nist if that is installed."""
+def _lines_from_dataframe(df) -> list[Line]:
+    """ASDCache / pandas dataframe (ASDCache schema) -> [Line]."""
+    def val(row, *names):
+        for n in names:
+            if n in row and row[n] is not None and str(row[n]) not in ("", "nan", "<NA>", "None"):
+                return row[n]
+        return None
+    out = []
+    for row in (df.to_dicts() if hasattr(df, "to_dicts") else df.to_dict("records")):
+        w = val(row, "obs_wl_air(nm)", "ritz_wl_air(nm)", "obs_wl_vac(nm)", "ritz_wl_vac(nm)")
+        w = _num(str(w)) if w is not None else None
+        if w is None:
+            continue
+        s_ = lambda *n: str(val(row, *n) or "").strip()
+        f_ = lambda *n: _num(str(val(row, *n))) if val(row, *n) is not None else None
+        out.append(Line(w, s_("intens"), f_("Aki(s^-1)"), f_("Ei(cm-1)"), f_("Ek(cm-1)"),
+                        s_("conf_i"), s_("term_i"), s_("J_i"), s_("conf_k"), s_("term_k"), s_("J_k")))
+    return out
+
+
+def fetch_lines(spectrum: str | Ion, wmin_nm: float, wmax_nm: float, timeout: float = 60,
+                backend: str = "auto") -> list[Line]:
+    """Lines of ``spectrum`` between ``wmin_nm`` and ``wmax_nm`` with the lower (i)
+    and upper (k) levels; wavelengths in air for 200-2000 nm (as NIST).
+
+    ``backend``: 'asdcache' (the ASDCache package: cached, robust), 'direct'
+    (own request to the NIST lines form) or 'auto' (ASDCache if installed).
+    """
     if isinstance(spectrum, Ion):
         spectrum = spectrum.spectrum
+    errors = []
+    if backend in ("auto", "asdcache"):
+        try:
+            from ASDCache import SpectraCache
+            df = SpectraCache().fetch(spectrum, wl_range=(wmin_nm, wmax_nm))
+            out = [l for l in _lines_from_dataframe(df) if wmin_nm <= l.wavelength_nm <= wmax_nm]
+            if out or backend == "asdcache":
+                return out
+        except ImportError as e:
+            if backend == "asdcache":
+                raise ImportError("pip install ASDCache") from e
+        except Exception as e:                       # ASDQueryError, network errors
+            errors.append(f"ASDCache: {e}")
+    # own request, same parameters as ASDCache but air wavelengths (show_av=2)
     params = {
-        "spectra": spectrum, "limits_type": "0", "low_w": str(wmin_nm), "upp_w": str(wmax_nm),
-        "unit": "1", "de": "0", "format": "2", "line_out": "0", "en_unit": "0", "output": "0",
-        "bibrefs": "0", "page_size": "15", "show_obs_wl": "1", "show_calc_wl": "1",
-        "unc_out": "0", "order_out": "0", "max_low_enrg": "", "show_av": "2", "max_upp_enrg": "",
-        "tsb_value": "0", "min_str": "", "A_out": "0", "intens_out": "on", "max_str": "",
-        "allowed_out": "1", "forbid_out": "1", "min_accur": "", "min_intens": "", "conf_out": "on",
-        "term_out": "on", "enrg_out": "on", "J_out": "on", "submit": "Retrieve Data",
+        "spectra": spectrum, "output_type": "0", "low_w": str(wmin_nm), "upp_w": str(wmax_nm),
+        "submit": "Retrieve Data", "unit": "1", "de": "0", "I_scale_type": "1", "format": "3",
+        "line_out": "0", "en_unit": "0", "output": "0", "bibrefs": "1", "show_obs_wl": "1",
+        "show_calc_wl": "1", "show_wn": "1", "unc_out": "1", "order_out": "0", "show_av": "2",
+        "tsb_value": "0", "A_out": "0", "S_out": "on", "f_out": "on", "loggf_out": "on",
+        "intens_out": "on", "conf_out": "on", "term_out": "on", "enrg_out": "on", "J_out": "on",
+        "g_out": "on", "allowed_out": "1", "forbid_out": "1",
     }
-    err = ""
     try:
         req = urllib.request.Request(LINES_URL + "?" + urllib.parse.urlencode(params),
                                      headers={"User-Agent": _UA})
@@ -417,29 +454,13 @@ def fetch_lines(spectrum: str | Ion, wmin_nm: float, wmax_nm: float, timeout: fl
         out = parse_lines(text)
         if out:
             return out
-        err = _snippet(text)
+        errors.append(f"direct: {_snippet(text)}")
     except OSError as e:
-        err = str(e)
-    try:                                            # optional fallback
-        import astropy.units as u
-        from astroquery.nist import Nist
-        tab = Nist.query(wmin_nm * u.nm, wmax_nm * u.nm, linename=spectrum, wavelength_type="vac+air")
-        out = []
-        for row in tab:
-            w = _num(str(row["Observed"])) or _num(str(row["Ritz"]))
-            if w is None:
-                continue
-            ei, ek = (str(row["Ei           Ek"]).split("-") + [""])[:2] if "Ei           Ek" in tab.colnames \
-                else ("", "")
-            out.append(Line(w, str(row["Rel."]), _num(str(row["Aki"])), _num(ei), _num(ek),
-                            str(row["Lower level"]), "", "", str(row["Upper level"]), "", ""))
-        if out:
-            return out
-    except Exception as e:                           # astroquery missing or failed
-        err += f"; astroquery: {e}"
-    raise RuntimeError(f"no NIST lines for {spectrum!r} in {wmin_nm}-{wmax_nm} nm: {err}\n"
-                       "Download by hand: https://physics.nist.gov/PhysRefData/ASD/lines_form.html "
-                       "(Format output: CSV) and use pydbsr.nist.read_lines('file.csv').")
+        errors.append(f"direct: {e}")
+    raise RuntimeError(f"no NIST lines for {spectrum!r} in {wmin_nm}-{wmax_nm} nm:\n  " + "\n  ".join(errors) +
+                       "\nTry 'pip install ASDCache', or download by hand: "
+                       "https://physics.nist.gov/PhysRefData/ASD/lines_form.html (Format output: CSV) "
+                       "and use pydbsr.nist.read_lines('file.csv').")
 
 
 def read_lines(path) -> list[Line]:

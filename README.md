@@ -123,6 +123,18 @@ cs.save("omega.npz")
   `sc.run_mat()`, `sc.run_hd()`. Состояние сохраняется в `pydbsr_*.json`, поэтому
   `Scattering.load("xe_scat")` / `Target.load("xe_target")` продолжают работу в новой сессии.
 
+### Линии NIST (какие уровни стоят за наблюдаемой линией)
+
+```python
+lines = db.nist.fetch_lines("Xe III", 474.5, 478.5)       # через ASDCache, если установлен (pip install "pydbsr[nist]")
+levels = db.nist.fetch_levels("Xe III")
+for line, up in db.nist.upper_levels(lines, levels):
+    print(line, "->", up.no if up else None)
+```
+ASDCache (кэш ответов NIST на 2 недели) умеет только линии; уровни `pydbsr` берёт сам
+из формы уровней ASD. Из терминала: `pydbsr lines "Xe III" 474 479 --csv lines.csv`,
+`pydbsr nist "Xe III" --csv levels.csv`.
+
 ### Уровни NIST без интернета
 
 ```bash
