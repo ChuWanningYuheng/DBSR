@@ -7,7 +7,8 @@ Method (DBSR manual, Sect. 2.2, Eqs. 2.15-2.36):
   ``R_ij(E) = 1/(2a) * sum_k w_ik w_jk / (E_k - E)`` (atomic units),
   relation ``P(a) = R (a P'(a) - b P(a))``  -> log-derivative
   ``Y(a) = (R^-1 + b) / a``.
-* Non-relativistic outer region (Eq. 2.32), Rydberg-like form
+* Outer region (Eq. 2.32; with relativistic kinematics by default, see
+  :func:`kmatrix`), Rydberg-like form
   ``P'' = [l(l+1)/r^2 - 2z/r - k^2 + sum_lam C_lam r^-(lam+1)] P``
   with the long-range coefficients ``C`` of the h-file (= 2 x alpha),
   ``k_i^2 = 2 (E - E_i)``, ``z = Z - N``.
@@ -33,7 +34,7 @@ from typing import Sequence
 
 import numpy as np
 
-from .constants import AU_EV, K_B_EV, PI_A0_2_CM2, RATE_UPS, V_EV_CM_S
+from .constants import AU_EV, C_AU, K_B_EV, PI_A0_2_CM2, RATE_UPS, V_EV_CM_S
 from .coulomb import coulomb_fg
 
 __all__ = ["HBlock", "HData", "read_h", "OuterRegion", "CollisionStrengths", "maxwell", "bugrova"]
@@ -183,18 +184,35 @@ def propagate_logderiv(Y, r0, r1, lfac, k2, z, cf, nsteps):
 # K-matrix at one energy for one partial wave
 # ---------------------------------------------------------------------------
 def kmatrix(blk: HBlock, hd: HData, etot: float, r_match: float | None = None,
-            step: float | None = None, bsto: float | None = None, symmetrize: bool = True):
+            step: float | None = None, bsto: float | None = None, symmetrize: bool = True,
+            relativistic: bool = True):
     """K-matrix (open x open) and the list of open channels at total energy ``etot`` (a.u.).
 
     The exact K is real symmetric (flux conservation, S unitary).  The computed
     one is symmetric to the accuracy of the R-matrix, the propagation and the
     Coulomb functions; it is symmetrised unless ``symmetrize=False`` (use that
     to measure the asymmetry, see ``tools/stress_test.py``).
+
+    ``relativistic``: outside r = a the large component of the Dirac equation
+    obeys P'' = [l(l+1)/r^2 - 2 z (1 + e/c^2)/r - k^2] P with
+    k^2 = 2e (1 + e/2c^2) (e = channel kinetic energy; from
+    [(W - V)^2 - c^4]/c^2, W = c^2 + e), i.e. relativistic kinematics in the
+    matching.  The inner region of DBSR is fully relativistic; with
+    ``relativistic=False`` the matching is non-relativistic as in STGF, which
+    misses a phase ~ k a e/4c^2 (3e-3 rad at 60 eV, a = 50 a0).  Neglected:
+    O(z^2/c^2 r^2) terms and the factor (1 + (e - V)/2c^2) in 2cQ = P' + kappa P/r
+    at r = a (relative 1e-4).
     """
     a = hd.ra
     b = hd.rb if bsto is None else bsto
     e_ch = hd.etarg[blk.target]
-    k2 = 2.0 * (etot - e_ch)
+    e_kin = etot - e_ch
+    if relativistic:
+        k2 = 2.0 * e_kin * (1.0 + e_kin / (2.0 * C_AU ** 2))
+        zc = hd.z * (1.0 + e_kin / C_AU ** 2)
+    else:
+        k2 = 2.0 * e_kin
+        zc = np.full(e_kin.shape, float(hd.z))
     # exactly at a threshold (|k^2| < K2_THRESHOLD) the channel is taken as just
     # open: the energy-normalised Coulomb functions have a finite limit for
     # k -> 0+ (attractive field), the closed-channel solution has none (kappa = 0)
@@ -210,13 +228,14 @@ def kmatrix(blk: HBlock, hd: HData, etot: float, r_match: float | None = None,
     rm = a if r_match is None else max(r_match, a)
     if rm > a:
         kmax = np.sqrt(np.max(np.abs(k2)) + 1e-12)
-        h = step if step is not None else min(0.05, 0.1 / max(kmax, 1e-3))
-        Y = propagate_logderiv(Y, a, rm, lfac, k2, hd.z, blk.cf, int(np.ceil((rm - a) / h)))
+        # Johnson's method is 4th order: h k = 0.01 gives |dK/K| ~ 1e-8 (0.1: ~1e-4)
+        h = step if step is not None else min(0.02, 0.01 / max(kmax, 1e-3))
+        Y = propagate_logderiv(Y, a, rm, lfac, k2, zc, blk.cf, int(np.ceil((rm - a) / h)))
     # asymptotic functions at r_match
     n, no = blk.nch, open_.size
     closed = np.setdiff1d(np.arange(n), open_)
     k = np.sqrt(k2[open_])
-    eta = -hd.z / k
+    eta = -zc[open_] / k
     F, G, Fp, Gp = coulomb_fg(blk.l[open_], eta, k * rm)
     sk = np.sqrt(k)
     f, g = F / sk, G / sk
@@ -229,7 +248,7 @@ def kmatrix(blk: HBlock, hd: HData, etot: float, r_match: float | None = None,
     Gpm[open_, open_] = gp
     if closed.size:
         Gm[closed, closed] = 1.0
-        Gpm[closed, closed] = closed_logderiv(blk.l[closed], -k2[closed], hd.z, rm)
+        Gpm[closed, closed] = closed_logderiv(blk.l[closed], -k2[closed], zc[closed], rm)
     X = np.linalg.solve(Gpm - Y @ Gm, -(Fpm - Y @ Fm))
     K = X[open_, :]
     return (0.5 * (K + K.T) if symmetrize else K), open_
@@ -251,10 +270,11 @@ def closed_logderiv(l, kappa2, z, r):
     kappa2 = np.atleast_1d(kappa2).astype(float)
     if np.any(kappa2 <= 0):
         raise ValueError("closed_logderiv: kappa^2 must be > 0 (channel below its threshold)")
+    z = np.broadcast_to(np.asarray(z, dtype=float), kappa2.shape)
     y, ok = _wkb_series(l * (l + 1.0), kappa2, z, r)
     out = np.where(ok, y, 0.0)
     for i in np.nonzero(~ok)[0]:
-        out[i] = _whittaker_cached(float(l[i]), float(kappa2[i]), float(z), float(r))
+        out[i] = _whittaker_cached(float(l[i]), float(kappa2[i]), float(z[i]), float(r))
     return out
 
 
@@ -322,12 +342,12 @@ _G = {}
 
 def _omega_one(args):
     ie, etot = args
-    hd, r_match, step = _G["hd"], _G["r_match"], _G["step"]
+    hd, r_match, step, rel = _G["hd"], _G["r_match"], _G["step"], _G.get("rel", True)
     nt = hd.ntarg
     om = np.zeros((nt, nt))
     om_pw = np.zeros((len(hd.blocks), nt, nt)) if _G["per_pw"] else None
     for ib, blk in enumerate(hd.blocks):
-        K, op = kmatrix(blk, hd, etot, r_match, step)
+        K, op = kmatrix(blk, hd, etot, r_match, step, relativistic=rel)
         if op.size == 0:
             continue
         T2 = np.abs(t_matrix(K)) ** 2
@@ -351,6 +371,7 @@ class CollisionStrengths:
     omega_pw: np.ndarray | None = None   # (ne, nlsp, nt, nt)
     pw: list | None = None               # [(2J, parity)] of the partial waves
     names: list | None = None            # target-state names (h-file order)
+    relativistic: bool = True            # k^2 = 2e(1 + e/2c^2) in sigma (as in the matching)
 
     def index(self, state) -> int:
         """Index of a target state given by name, State object or index."""
@@ -374,7 +395,8 @@ class CollisionStrengths:
         ``i``, ``j``: indices, names or State objects."""
         i, j = self.index(i), self.index(j)
         e_inc = self.energies - self.thresholds[i]          # incident energy on state i, eV
-        k2 = e_inc / (AU_EV / 2)                             # k^2 in Ry = (k a0)^2
+        e_au = e_inc / AU_EV
+        k2 = 2.0 * e_au * (1.0 + e_au / (2.0 * C_AU ** 2)) if self.relativistic else 2.0 * e_au   # (k a0)^2
         with np.errstate(divide="ignore", invalid="ignore"):
             s = self.omega[:, i, j] / (self.g[i] * k2)
         s = np.where((e_inc > 0) & (self.energies > self.thresholds[j]), s, np.nan)
@@ -439,7 +461,7 @@ class CollisionStrengths:
         if self.pw is not None:
             extra["pw"] = np.array(self.pw)
         np.savez_compressed(path, energies=self.energies, thresholds=self.thresholds, two_j=self.two_j,
-                            omega=self.omega, **extra)
+                            omega=self.omega, relativistic=self.relativistic, **extra)
 
     @classmethod
     def load(cls, path):
@@ -447,9 +469,11 @@ class CollisionStrengths:
         get = lambda k: d[k] if k in d.files else None
         names = get("names")
         pw = get("pw")
+        rel = get("relativistic")
         return cls(d["energies"], d["thresholds"], d["two_j"], d["omega"], get("omega_pw"),
                    None if pw is None else [tuple(x) for x in pw.tolist()],
-                   None if names is None else names.tolist())
+                   None if names is None else names.tolist(),
+                   bool(rel) if rel is not None else False)
 
 
 def maxwell(Te_eV: float):
@@ -480,10 +504,11 @@ class OuterRegion:
     """
 
     def __init__(self, hdata: HData, r_match: float | None = None, step: float | None = None,
-                 names: Sequence[str] | None = None):
+                 names: Sequence[str] | None = None, relativistic: bool = True):
         self.h = hdata
         self.r_match = r_match
         self.step = step
+        self.relativistic = relativistic
         self.names = list(names) if names is not None else None
         if self.names is not None and len(self.names) != hdata.ntarg:
             raise ValueError(f"{len(self.names)} names for {hdata.ntarg} target states")
@@ -499,7 +524,7 @@ class OuterRegion:
     def kmatrix(self, block: int, energy_ev: float):
         """K-matrix of partial wave ``block`` (0-based) at electron energy (eV above ground)."""
         return kmatrix(self.h.blocks[block], self.h, self.h.etarg.min() + energy_ev / AU_EV,
-                       self.r_match, self.step)
+                       self.r_match, self.step, relativistic=self.relativistic)
 
     def collision_strengths(self, energies_ev, jobs: int | None = None,
                             per_partial_wave: bool = False) -> CollisionStrengths:
@@ -510,14 +535,16 @@ class OuterRegion:
         nt, nb = self.h.ntarg, len(self.h.blocks)
         omega = np.zeros((len(energies), nt, nt))
         omega_pw = np.zeros((len(energies), nb, nt, nt)) if per_partial_wave else None
-        _G.update(hd=self.h, r_match=self.r_match, step=self.step, per_pw=per_partial_wave)
+        _G.update(hd=self.h, r_match=self.r_match, step=self.step, per_pw=per_partial_wave,
+                  rel=self.relativistic)
         jobs = jobs or 1
         if jobs > 1:
             import multiprocessing as mp
             ctx = mp.get_context("fork") if "fork" in mp.get_all_start_methods() else None
             with ProcessPoolExecutor(max_workers=jobs, mp_context=ctx,
                                      initializer=_init_worker,
-                                     initargs=(self.h, self.r_match, self.step, per_partial_wave)) as pool:
+                                     initargs=(self.h, self.r_match, self.step, per_partial_wave,
+                                               self.relativistic)) as pool:
                 results = pool.map(_omega_one, tasks, chunksize=max(1, len(tasks) // (8 * jobs)))
                 for ie, om, opw in results:
                     omega[ie] = om
@@ -531,9 +558,9 @@ class OuterRegion:
                     omega_pw[ie] = opw
         pw = [(b.two_j, b.parity) for b in self.h.blocks]
         return CollisionStrengths(energies, self.thresholds_ev, self.h.two_j_targ.copy(), omega, omega_pw, pw,
-                                  self.names)
+                                  self.names, self.relativistic)
 
 
-def _init_worker(hd, r_match, step, per_pw):
+def _init_worker(hd, r_match, step, per_pw, rel=True):
     os.environ.setdefault("OMP_NUM_THREADS", "1")
-    _G.update(hd=hd, r_match=r_match, step=step, per_pw=per_pw)
+    _G.update(hd=hd, r_match=r_match, step=step, per_pw=per_pw, rel=rel)

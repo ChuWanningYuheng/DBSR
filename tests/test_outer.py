@@ -39,7 +39,7 @@ def test_single_channel_coulomb_phase(z, l, delta, k, r_match_extra):
     u, up = F * np.cos(delta) + G * np.sin(delta), k * (Fp * np.cos(delta) + Gp * np.sin(delta))
     blk = _block_from_Y(np.array([[up / u]]), a, etot, [l], [0])
     hd = _hdata(z, a, [0.0], blk)
-    K, op = kmatrix(blk, hd, etot, r_match=a + r_match_extra, step=0.01)
+    K, op = kmatrix(blk, hd, etot, r_match=a + r_match_extra, step=0.01, relativistic=False)
     assert op.tolist() == [0]
     assert K[0, 0] == pytest.approx(np.tan(delta), rel=1e-7, abs=1e-9)
 
@@ -95,3 +95,23 @@ def test_closed_channel_rmatch_independence():
 def test_closed_channel_logderiv(l, k2, z, r):
     from pydbsr.outer import _whittaker_logderiv, closed_logderiv
     assert closed_logderiv(l, k2, z, r)[0] == pytest.approx(_whittaker_logderiv(l, k2, z, r), rel=1e-5)
+
+
+@pytest.mark.parametrize("z,l,delta,e", [(1, 0, 0.3, 2.0), (1, 3, -0.7, 40.0), (2, 1, 1.1, 0.02)])
+def test_relativistic_matching(z, l, delta, e):
+    """kmatrix(relativistic=True) matches to Coulomb functions with the Dirac
+    k^2 = 2e(1 + e/2c^2) and eta = -z(1 + e/c^2)/k; the non-relativistic
+    matching of the same R-matrix gives a different phase."""
+    from pydbsr.constants import C_AU
+    a = 20.0
+    k = np.sqrt(2 * e * (1 + e / (2 * C_AU ** 2)))
+    eta = -z * (1 + e / C_AU ** 2) / k
+    F, G, Fp, Gp = coulomb_fg(l, eta, k * a)
+    u, up = F * np.cos(delta) + G * np.sin(delta), k * (Fp * np.cos(delta) + Gp * np.sin(delta))
+    blk = _block_from_Y(np.array([[up / u]]), a, e, [l], [0])
+    hd = _hdata(z, a, [0.0], blk)
+    for r_extra in ((0.0, 25.0) if e < 10 else (0.0,)):     # (propagation over 25 a0 at k = 9 costs)
+        K, _ = kmatrix(blk, hd, e, r_match=a + r_extra, relativistic=True)
+        assert K[0, 0] == pytest.approx(np.tan(delta), rel=1e-7, abs=1e-9)
+    Kn, _ = kmatrix(blk, hd, e, relativistic=False)
+    assert abs(Kn[0, 0] - np.tan(delta)) > 1e-7 * (1 + e)

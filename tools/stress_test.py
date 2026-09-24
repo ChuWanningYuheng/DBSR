@@ -17,7 +17,7 @@ Checks fundamental properties on real DBSR output, not on mock data:
     symmetrisation (flux conservation), unitarity of S, |T|^2 <= 4, Omega >= 0,
     Omega_ij = Omega_ji, finite results exactly at / just above / just below
     every threshold, reproducibility of the parallel run, effect of the
-    relativistic kinematics neglected in the outer region.
+    size of the relativistic-kinematics correction in the matching.
  5. Inner-region matrices (dbsr_mat.nnn): lower-triangle storage (symmetric by
     construction), finite elements, overlap matrix positive definite.
  6. Target consistency reported by dbsr_mat3 (off-diagonal <i|H|j>, <i|j>).
@@ -58,7 +58,7 @@ if "PYDBSR_COULOMB_LIB" not in os.environ and os.environ.get("DBSR_BIN"):
 import pydbsr as db  # noqa: E402
 from pydbsr import io  # noqa: E402
 from pydbsr.coulomb import _mp_fg, backend, coulomb_fg  # noqa: E402
-from pydbsr.outer import HData, closed_logderiv, kmatrix, read_h, t_matrix  # noqa: E402
+from pydbsr.outer import closed_logderiv, kmatrix, read_h, t_matrix  # noqa: E402
 from pydbsr.runner import DBSRError, run, which  # noqa: E402
 
 C_DBSR = 137.03599976          # speed of light used by DBSR (ZCOM MOD_zconst)
@@ -329,20 +329,24 @@ def test_outer(scat: Path):
     check("S-matrix unitary", unit_max < 1e-10, f"max |S^+S - 1| = {unit_max:.1e}")
     check("|T|^2 <= 4 (unitarity bound)", t2_max <= 4 + 1e-10, f"max |T|^2 = {t2_max:.4f}")
 
-    # continuity at the thresholds (limit from above, attractive Coulomb field).
-    # NB: on a 1e-7 a.u. scale |T|^2 may vary fast: Rydberg resonances of a closed
-    # channel whose threshold lies just above (physical, not tested here)
+    # continuity at the thresholds (limit from above, attractive Coulomb field):
+    # no jump at E_t beyond the local variation.  (On a 1e-7 a.u. scale |T|^2 can
+    # vary fast: Rydberg resonances of a closed channel whose threshold lies
+    # just above - physical.)
     worst = 0.0
+    d = 1e-9
     for et in thr[1:]:
         for blk in hd.blocks:
-            K1, op1 = kmatrix(blk, hd, et)
-            K2, op2 = kmatrix(blk, hd, et + 1e-12)
-            if op1.size and np.array_equal(op1, op2):
-                T1, T2 = np.abs(t_matrix(K1)) ** 2, np.abs(t_matrix(K2)) ** 2
-                big = T2 > 1e-4 * max(T2.max(), 1e-30)
-                worst = max(worst, np.max(np.abs(T1[big] - T2[big]) / T2[big]))
-    check("|T|^2 continuous at every threshold (E_t vs E_t + 1e-12 a.u.)", worst < 1e-5,
-          f"max rel. difference {worst:.1e} at {thr.size - 1} thresholds")
+            Ks = [kmatrix(blk, hd, et + x) for x in (0.0, d, 2 * d)]
+            if Ks[0][1].size == 0 or not all(np.array_equal(Ks[0][1], k[1]) for k in Ks):
+                continue
+            T0, T1, T2 = (np.abs(t_matrix(k[0])) ** 2 for k in Ks)
+            jump = np.max(np.abs(T1 - T0))
+            slope = np.max(np.abs(T2 - T1))
+            worst = max(worst, (jump - slope) / max(T1.max(), 1e-30))
+    check("|T|^2 continuous at every threshold (no jump beyond the local slope)", worst < 1e-6,
+          f"max (|T(E_t)-T(E_t+d)| - |T(E_t+d)-T(E_t+2d)|)/max T = {worst:.1e}, d = {d} a.u., "
+          f"{thr.size - 1} thresholds")
 
     out = db.OuterRegion(hd, names=names)
     e_ev = np.concatenate([np.linspace(0.05, (thr.max() - e0) * 27.211386 + 5, 40), (thr - e0) * 27.211386])
@@ -356,26 +360,20 @@ def test_outer(scat: Path):
     sig = cs1.sigma(0, 1)
     check("sigma: NaN below threshold only, no inf", not np.any(np.isinf(sig)))
 
-    # relativistic kinematics neglected outside r = a:  k^2 -> 2 e (1 + e / 2c^2).
-    # Tested above the highest threshold (no closed-channel resonances); below,
-    # the same correction only shifts the Rydberg resonances by e^2/2c^2.
+    # relativistic kinematics in the matching (default): size of the effect
     probe = thr.max() + np.array([0.05, 0.3, 0.8, 1.5])
-    worst = 0.0
+    tot = weak = 0.0
     for etot in probe:
-        e_ch = etot - hd.etarg
-        e_rel = etot - e_ch * (1 + e_ch / (2 * C_DBSR ** 2))
-        hd_rel = HData(hd.nelc, hd.nz, hd.ntarg, hd.ra, hd.rb, e_rel, hd.two_j_targ, hd.parity_targ, hd.blocks)
         for blk in hd.blocks:
-            K1, op = kmatrix(blk, hd, etot)
-            K2, _ = kmatrix(blk, hd_rel, etot)
+            K1, op = kmatrix(blk, hd, etot, relativistic=False)
+            K2, _ = kmatrix(blk, hd, etot, relativistic=True)
             if op.size:
                 T1, T2 = np.abs(t_matrix(K1)) ** 2, np.abs(t_matrix(K2)) ** 2
                 big = T1 > 1e-3 * T1.max()
-                worst = max(worst, np.max(np.abs(T2[big] - T1[big]) / T1[big]))
-    e_closed = 0.5                                   # a.u.: deepest closed channel of interest
-    check("relativistic kinematics in the outer region negligible", worst < 1e-3,
-          f"max rel. change of |T|^2 = {worst:.1e} at E <= {(probe.max() - e0) * 27.211:.0f} eV; "
-          f"below thresholds: resonance shift <= {e_closed ** 2 / (2 * C_DBSR ** 2) * 27.211e3:.2f} meV")
+                tot = max(tot, abs(T2.sum() - T1.sum()) / T1.sum())
+                weak = max(weak, np.max(np.abs(T2[big] - T1[big]) / T1[big]))
+    print(f"    relativistic vs non-relativistic matching at E <= {(probe.max() - e0) * 27.211:.0f} eV: "
+          f"sum|T|^2 changes by {tot:.1e}, weak elements by up to {weak:.1e} (used: relativistic)")
 
     # propagation beyond a (long-range multipoles): converges with r_match
     etot = e0 + 1.2
