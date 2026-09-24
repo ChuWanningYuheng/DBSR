@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Callable, Sequence
 
 from . import io
 from .atoms import Ion
-from .runner import run, run_partial_waves
+from .runner import ResourcePool, _collect, _sandbox, run, run_partial_waves
 from .structure import State, Target
 
 __all__ = ["Scattering"]
@@ -203,6 +204,99 @@ class Scattering:
             self.run_mat()
         if "hd" in steps:
             self.run_hd(**hd_args)
+        return self
+
+    # ----------------------------------------------------------- big runs
+    def wave_sizes(self) -> list[dict]:
+        """Estimated size of every partial wave after dbsr_conf3: channels, matrix
+        dimension and memory (GB) for dbsr_mat3 / dbsr_hd3."""
+        text = (self.workdir / "target_jj").read_text()
+        nch = {int(m.group(1)): (int(m.group(2)), int(m.group(3)))
+               for m in re.finditer(r"^\s*(\d+)\.\s+nch\s*=\s*(\d+)\s+nc\s*=\s*(\d+)", text, re.M)}
+        ns = int(io.read_knot(self.workdir / "knot.dat").get("ns", 150))
+        out = []
+        for k in range(1, self.nlsp + 1):
+            n, nc = nch.get(k, (0, 0))
+            khm = n * max(ns - 6, 1) + nc
+            full = khm * khm * 8 / 1e9                     # one dense matrix, GB
+            out.append(dict(klsp=k, two_j=self.partial_waves[k - 1][0], parity=self.partial_waves[k - 1][1],
+                            nch=n, khm=khm, mat_gb=1.0 + 1.0 * full, hd_gb=1.0 + 2.6 * full,
+                            disk_gb=0.5 * full))
+        return out
+
+    def run_streamed(self, cores: int, mem_gb: float, hd_threads: int = 8, cleanup: bool = True,
+                     skip_done: bool = True, itype: int = 0, hd_args: dict | None = None):
+        """dbsr_breit3 -> dbsr_mat3 -> dbsr_hd3 for each partial wave as soon as possible,
+        within a budget of ``cores`` CPU cores and ``mem_gb`` GB of memory.
+
+        * the largest partial waves start first; dbsr_mat3 uses 1 core,
+          dbsr_hd3 ``hd_threads`` (multithreaded LAPACK);
+        * with ``cleanup`` the big intermediate files (``dbsr_mat.nnn``,
+          ``int_bnk.nnn``) are deleted as soon as ``h.nnn`` is written, so the
+          disk holds only a few partial waves at a time;
+        * with ``skip_done`` partial waves that already have ``h.nnn`` are
+          skipped: an interrupted run is continued by calling this again.
+
+        ``prepare()``, ``run_prep()`` and ``run_conf()`` must have been run.
+        """
+        import threading
+        import time
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        wd = self.workdir.resolve()
+        pool = ResourcePool(cores, mem_gb)
+        sizes = sorted(self.wave_sizes(), key=lambda d: -d["khm"])
+        hd = [f"itype={itype}"]
+        if self.exp_energies and (wd / "thresholds").exists():
+            hd.append("iexp=1")
+        hd += [f"{k}={v}" for k, v in (hd_args or {}).items()]
+        out_name = {0: "h", 1: "h", -1: "bound"}.get(itype, "h")
+        todo = [d for d in sizes if not (skip_done and (wd / f"{out_name}.{d['klsp']:03d}").exists())]
+        self._log(f"streamed run: {len(todo)} of {len(sizes)} partial waves, {cores} cores, {mem_gb:.0f} GB; "
+                  f"largest matrix {sizes[0]['khm']} (~{sizes[0]['hd_gb']:.1f} GB in dbsr_hd3)")
+        lock = threading.Lock()
+
+        def step(sb, prog, args, ncores, mem, k):
+            c, m = pool.acquire(ncores, mem)
+            try:
+                return run(prog, [f"klsp1={k}", f"klsp2={k}", *args], sb, threads=c,
+                           log=f"{prog}.out.{k:03d}")
+            finally:
+                pool.release(c, m)
+
+        def job(d):
+            k = d["klsp"]
+            t0 = time.time()
+            sb, copied = _sandbox(wd, f"wave_{k:03d}")
+            try:
+                step(sb, "dbsr_breit3", [], 1, 1.0, k)
+                step(sb, "dbsr_mat3", [], 1, d["mat_gb"], k)
+                step(sb, "dbsr_hd3", hd, hd_threads, d["hd_gb"], k)
+                if cleanup:
+                    for f in (f"dbsr_mat.{k:03d}", f"int_bnk.{k:03d}"):
+                        p = sb / f
+                        if p.exists() or p.is_symlink():
+                            p.unlink()
+            finally:
+                with lock:
+                    _collect(sb, wd, f"{k:03d}", copied)
+            if cleanup:
+                for f in (f"dbsr_mat.{k:03d}", f"int_bnk.{k:03d}"):
+                    if (wd / f).exists():
+                        (wd / f).unlink()
+            return k, time.time() - t0
+
+        with ThreadPoolExecutor(max_workers=max(1, len(todo))) as ex:
+            futs = [ex.submit(job, d) for d in todo]
+            for f in as_completed(futs):
+                k, t = f.result()
+                d = next(x for x in sizes if x["klsp"] == k)
+                self._log(f"  partial wave {k} (2J={d['two_j']}, {'+' if d['parity'] > 0 else '-'}, "
+                          f"{d['nch']} channels, ~{d['khm']}): done in {t / 60:.1f} min")
+        try:
+            (wd / "_parallel").rmdir()
+        except OSError:
+            pass
         return self
 
     # ----------------------------------------------------------- thresholds

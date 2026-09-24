@@ -36,7 +36,7 @@ import numpy as np
 from .constants import AU_EV, K_B_EV, PI_A0_2_CM2
 from .coulomb import coulomb_fg
 
-__all__ = ["HBlock", "HData", "read_h", "OuterRegion", "CollisionStrengths"]
+__all__ = ["HBlock", "HData", "read_h", "OuterRegion", "CollisionStrengths", "maxwell", "bugrova"]
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +367,21 @@ class CollisionStrengths:
         boltz = np.exp(-np.maximum(de, 0) / (K_B_EV * T))
         return 8.629e-6 / (self.g[i] * np.sqrt(T)) * ups * boltz
 
+    def rate_eedf(self, i, j, eedf) -> float:
+        """Rate coefficient (cm^3/s) for i -> j with an electron energy distribution:
+        ``Q = integral sigma(E) sqrt(2E/m) g(E) dE`` (Zhu et al 2019, Eq. 18).
+
+        ``eedf``: callable g(E [eV]) normalised to 1, e.g. :func:`maxwell` or
+        :func:`bugrova`.  Integrated on the computed energy grid, so the grid
+        must cover the part of the distribution above the threshold.
+        """
+        e = self.incident_energy(i)
+        sig = np.nan_to_num(self.sigma(i, j), nan=0.0)
+        m = e > 0
+        v = 5.930969e7 * np.sqrt(e[m])                       # electron speed, cm/s
+        f = sig[m] * v * eedf(e[m])
+        return float(np.trapezoid(f, e[m]) if hasattr(np, "trapezoid") else np.trapz(f, e[m]))
+
     def save(self, path):
         extra = {} if self.omega_pw is None else {"omega_pw": self.omega_pw}
         if self.names is not None:
@@ -385,6 +400,25 @@ class CollisionStrengths:
         return cls(d["energies"], d["thresholds"], d["two_j"], d["omega"], get("omega_pw"),
                    None if pw is None else [tuple(x) for x in pw.tolist()],
                    None if names is None else names.tolist())
+
+
+def maxwell(Te_eV: float):
+    """Maxwellian electron energy distribution g(E), E and Te in eV (normalised to 1)."""
+    def g(E):
+        E = np.asarray(E, float)
+        return 2.0 * np.sqrt(E / np.pi) * Te_eV ** -1.5 * np.exp(-E / Te_eV)
+    return g
+
+
+def bugrova(Te_eV: float):
+    """Bugrova distribution (Hall-thruster channel; Zhu et al 2019, Eq. 19):
+    g(E) = 15/4 u^-5/2 E^1/2 (u - E) for E <= u, mean energy 3u/7 = 3Te/2."""
+    u = 3.5 * Te_eV
+
+    def g(E):
+        E = np.asarray(E, float)
+        return np.where(E <= u, 3.75 * u ** -2.5 * np.sqrt(np.clip(E, 0, None)) * (u - E), 0.0)
+    return g
 
 
 class OuterRegion:

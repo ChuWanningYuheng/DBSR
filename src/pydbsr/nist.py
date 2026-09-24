@@ -31,6 +31,7 @@ class Level:
     two_j: int
     energy_cm: float
     parity: int            # +1 / -1 (from the configuration)
+    no: int | None = None  # level number in order of increasing energy ("NIST No.")
 
     @property
     def J(self):
@@ -117,9 +118,24 @@ def nist_shells(conf: str) -> dict:
     """``'5s2.5p4.(3P).6s'`` -> {(5,0):2, (5,1):4, (6,0):1} (parent terms removed)."""
     c = re.sub(r"\([^)]*\)|<[^>]*>", " ", conf)
     out = {}
-    for n, l, q in re.findall(r"(\d+)([spdfghik])(\d*)", c):
+    # occupation digits must not swallow the n of the next shell ('5s5p6' = 5s 5p6)
+    for n, l, q in re.findall(r"(\d+)([spdfghik])(\d*?)(?=\d+[spdfghik]|[^\d]|$)", c):
         out[(int(n), io.L_SYMBOLS.index(l))] = int(q) if q else 1
     return out
+
+
+def number_levels(levels: list[Level]) -> list[Level]:
+    """Set ``Level.no`` (1-based, increasing energy; equal energies keep table order)."""
+    order = sorted(range(len(levels)), key=lambda i: (levels[i].energy_cm, i))
+    seen = {}
+    no = 0
+    for i in order:
+        key = (levels[i].config, levels[i].term, levels[i].energy_cm)
+        if key not in seen:                 # a row "J = 1/2, 3/2" gives one level per J
+            no += 1
+        seen[key] = True
+        levels[i].no = no if levels[i].no is None else levels[i].no
+    return levels
 
 
 def parse_levels(text: str) -> list[Level]:
@@ -142,7 +158,7 @@ def parse_levels(text: str) -> list[Level]:
             conf = f[0]
             for tj in js:
                 levels.append(Level(conf, f[1] if len(f) > 4 else "", tj, e, _parity(conf)))
-        return levels
+        return number_levels(levels)
     rows = list(csv.reader(_io.StringIO("\n".join(lines)), delimiter=delim))
     head = [_clean(h).lower() for h in rows[0]]
 
@@ -166,11 +182,11 @@ def parse_levels(text: str) -> list[Level]:
         term = _clean(row[it]) if it is not None else ""
         for tj in js:
             levels.append(Level(conf, term, tj, e, _parity(conf, term)))
-    return levels
+    return number_levels(levels)
 
 
 def _parity(conf: str, term: str = "") -> int:
-    if term.endswith("*"):
+    if term.endswith("*") or term.endswith("°"):
         return -1
     sh = nist_shells(conf)
     return -1 if sum(l * q for (n, l), q in sh.items()) % 2 else 1
@@ -212,6 +228,7 @@ def assign(states, levels: Sequence[Level] | str | Ion, overwrite: bool = True,
             lv = lvs[i] if i < len(lvs) else None
             if lv is not None and (overwrite or s.exp_energy_cm is None):
                 s.exp_energy_cm = lv.energy_cm
+                s.nist_no = lv.no
                 s.nist_label = f"{lv.config} {lv.term} J={lv.two_j}/2" if lv.two_j % 2 else \
                     f"{lv.config} {lv.term} J={lv.two_j // 2}"
             result.append((s, lv))

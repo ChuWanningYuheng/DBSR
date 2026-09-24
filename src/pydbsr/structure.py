@@ -28,6 +28,7 @@ class State:
     source: str = ""          # HF run it came from
     exp_energy_cm: float | None = None   # experimental excitation energy (cm-1), e.g. NIST
     nist_label: str | None = None
+    nist_no: int | None = None           # NIST level number (increasing energy)
 
     @property
     def J(self) -> float:

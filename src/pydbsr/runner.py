@@ -178,6 +178,31 @@ def _collect(sb: Path, workdir: Path, suffix: str, copied: set):
     shutil.rmtree(sb)
 
 
+class ResourcePool:
+    """Blocking budget of CPU cores and memory (GB) shared by concurrent jobs."""
+
+    def __init__(self, cores: int, mem_gb: float):
+        import threading
+        self.cores, self.mem = cores, mem_gb
+        self.free_cores, self.free_mem = cores, mem_gb
+        self.cv = threading.Condition()
+
+    def acquire(self, cores: int, mem_gb: float):
+        cores = min(cores, self.cores)
+        mem_gb = min(mem_gb, self.mem)          # a job larger than the budget runs alone
+        with self.cv:
+            self.cv.wait_for(lambda: self.free_cores >= cores and self.free_mem >= mem_gb)
+            self.free_cores -= cores
+            self.free_mem -= mem_gb
+        return cores, mem_gb
+
+    def release(self, cores: int, mem_gb: float):
+        with self.cv:
+            self.free_cores += cores
+            self.free_mem += mem_gb
+            self.cv.notify_all()
+
+
 def run_partial_waves(program: str, klsps: Iterable[int], workdir: str | Path, *,
                       args: Sequence[str] = (), jobs: int = 1, threads: int = 1,
                       echo: bool = False, progress: Callable[[str], None] | None = print,
