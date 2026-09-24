@@ -147,6 +147,46 @@ db.run("dbsr_ci3", ["name"], cwd="xe_target")          # или напрямую
 tg.add("5s2 5p4 5d", ci=True)            # после dbsr_hf ещё dbsr_breit3 + dbsr_ci3 (КВ с Брейтом)
 ```
 
+## Установка на сервер (большой диск, маленький домашний каталог)
+
+```bash
+df -h                                   # найти раздел на ~1 ТБ, например /data
+curl -fsSLO https://raw.githubusercontent.com/ChuWanningYuheng/DBSR/claude/zealous-hawking-l7bm06/tools/setup_server.sh
+bash setup_server.sh /data/pydbsr_calc  # Miniforge, окружение, кэши, tmp — всё туда
+source /data/pydbsr_calc/env.sh         # в каждой новой сессии
+```
+Скрипт ставит conda (Miniforge) с gfortran, CMake и OpenBLAS/LAPACK в
+`/data/pydbsr_calc`, собирает пакет и регистрирует ядро Jupyter «Python (pydbsr)».
+
+## Большие расчёты: потоковый режим
+
+Файлы `dbsr_mat.nnn` занимают примерно ½·N²·8 байт на волну (N — размер матрицы):
+при N ≈ 50 000 это около 10 ГБ на волну, а при ~100 волнах — около 1 ТБ.
+`run_streamed` обрабатывает волну целиком (breit → mat → hd), удаляет
+`dbsr_mat.nnn` и `int_bnk.nnn` сразу после записи `h.nnn` и следит за общим
+бюджетом ядер и памяти (`dbsr_hd3` держит в памяти ≈ 2·N²·8 байт):
+
+```python
+sc = db.Scattering(tg, "run", states=..., jmax=25)
+sc.prepare(); sc.run_prep(); sc.run_conf()
+print(sc.wave_sizes())                                   # каналы, N, память по волнам
+sc.run_streamed(cores=64, mem_gb=200, hd_threads=16)     # повторный запуск продолжает с места обрыва
+```
+
+Долгие расчёты удобно запускать в фоне: `nohup python run.py > run.log 2>&1 &`
+(или внутри `tmux`/`screen`).
+
+## Сравнение с Wang et al (2019): e + Xe⁺, DBSR, 67 состояний
+
+```bash
+python examples/xe_plus_vs_wang2019.py --xlsx CrossSectionsIon.xlsx --jmax 10 --cores 64 --mem 200
+python examples/xe_plus_vs_wang2019.py --xlsx CrossSectionsIon.xlsx --jmax 25 --cores 64 --mem 200  # добавит J = 11..25
+```
+Уровни и номера NIST берутся из листа «NIST Level Table» файла, пороги сдвигаются
+на NIST (как в статье). Результат — `compare/*.png` (σ, наше и из статьи) и
+`compare/rates.txt` (скорости для Максвелла и распределения Бугровой при
+Tₑ = 2, 5, 10, 20 эВ и их отношения).
+
 ## Внешняя область: что именно считается
 
 Уравнения — из руководства DBSR (разд. 2.2, ур. 2.15–2.36):
