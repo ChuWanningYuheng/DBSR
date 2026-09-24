@@ -59,10 +59,34 @@ class ConfigSpec:
     inp: str | None = None             # input .bsw
     ci: bool = False                   # run dbsr_breit3 + dbsr_ci3 afterwards
     extra: dict = field(default_factory=dict)
+    correlation: str = ""              # correlation configurations (' + '-separated)
+    mchf_varied: str = ""              # orbitals re-optimised by dbsr_mchf
+    mchf_max_it: int = 100
 
 
 def _confs(spec: ConfigSpec) -> list[str]:
     return [c.strip() for c in spec.conf.split(" + ")]
+
+
+def _all_confs(spec: ConfigSpec) -> list[str]:
+    """Physical + correlation configurations."""
+    return _confs(spec) + ([c.strip() for c in spec.correlation.split(" + ")] if spec.correlation else [])
+
+
+def _n_physical(spec: ConfigSpec, cf) -> dict:
+    """Number of CSFs of the physical configurations in every J block {block: n}."""
+    phys = [tuple(sorted(((n, l), q) for n, l, q in io.parse_config(c))) for c in _confs(spec)]
+    shells = {sh for key in phys for sh, _ in key}
+    out = {}
+    for ib, (a, b) in enumerate(_j_blocks(cf), 1):
+        n = 0
+        for k in range(a - 1, b):
+            occ = _csf_config(cf.csfs[k][0])
+            if tuple(sorted((sh, q) for sh, q in occ if sh in shells)) in phys and \
+                    all(sh in shells for sh, q in occ if q):
+                n += 1
+        out[ib] = n
+    return out
 
 
 def _csf_config(line: str) -> tuple:
@@ -185,12 +209,25 @@ class Target:
 
     def add(self, conf: str | Sequence[str], name: str | None = None,
             varied: str | Sequence[str] | None = None,
-            term: str = "LS", jj_varied: str = "none", ci: bool = False, **hf_args) -> ConfigSpec:
+            term: str = "LS", jj_varied: str = "none", ci: bool = False,
+            correlation: Sequence[str] | str | None = None, mchf_varied: str | None = None,
+            mchf_max_it: int = 100, **hf_args) -> ConfigSpec:
         """Add a configuration (only peel shells, e.g. ``'5s2 5p4 6p'``), or a list of
         configurations of the same parity that are treated together, with
         configuration interaction between them (e.g. ``['5s 5p6', '5s2 5p4 5d']``:
         the strong 5s5p^6 - 5p^4 5d mixing in Xe II).  Each resulting state is
         labelled with its dominant configuration.
+
+        ``correlation``: extra configurations containing correlation orbitals,
+        e.g. ``['5s2 5p4 6d']`` for 5s2 5p4 5d.  After dbsr_hf, dbsr_mchf
+        re-optimises ``mchf_varied`` (default: the new orbitals of all
+        configurations, e.g. '5d-,5d,6d-,6d') for the *physical* states only
+        (the lowest ones in each J, as many as the physical configurations
+        have CSFs).  The correlation orbital then describes the term
+        dependence of the physical orbital (a different 5d for different
+        parent cores) while all states stay orthogonal (one orbital set, one
+        diagonalisation), as required by the scattering programs.  Only the
+        physical states are kept.
 
         The first configuration is the reference: all its orbitals are
         optimised (``varied='all'``).  For the others, by default only the
@@ -205,13 +242,14 @@ class Target:
         eV too high).  Use 'nl-' explicitly to vary a single subshell.
         """
         confs = [conf] if isinstance(conf, str) else list(conf)
+        corr = [correlation] if isinstance(correlation, str) else list(correlation or [])
         n_core = sum(2 * (2 * io.L_SYMBOLS.index(s[-1]) + 1) for s in self.core_shells)
-        for c in confs:
+        for c in confs + corr:
             n = n_core + io.config_nelectrons(c)
             if n != self.ion.nelc:
                 raise ValueError(f"{c!r}: {n} electrons with the core, {self.ion} has {self.ion.nelc}")
-        if len({io.config_parity(c) for c in confs}) > 1:
-            raise ValueError(f"configurations {confs} have different parities")
+        if len({io.config_parity(c) for c in confs + corr}) > 1:
+            raise ValueError(f"configurations {confs + corr} have different parities")
         name = name or "__".join(_default_name(c) for c in confs)
         if any(s.name == name for s in self.specs):
             raise ValueError(f"duplicate name {name!r}")
@@ -222,14 +260,18 @@ class Target:
             else:
                 ref_sh = {(n_, l) for c in _confs(ref) for n_, l, _ in io.parse_config(c)}
                 new = []
-                for c in confs:
+                for c in confs + corr:
                     new += [(n_, l) for n_, l, _ in io.parse_config(c) if (n_, l) not in ref_sh and (n_, l) not in new]
                 varied = ",".join(jj_subshells(n_, l) for n_, l in new) if new else "none"
         else:
             if not isinstance(varied, str):
                 varied = ",".join(varied)
             varied = expand_varied(varied)
-        spec = ConfigSpec(conf=" + ".join(io.pretty_conf(c) for c in confs), name=name, varied=varied, term=term,
+        if corr and mchf_varied is None:
+            mchf_varied = varied if varied not in ("all", "none") else ""
+        spec = ConfigSpec(conf=" + ".join(io.pretty_conf(c) for c in confs), name=name,
+                          correlation=" + ".join(io.pretty_conf(c) for c in corr),
+                          mchf_varied=expand_varied(mchf_varied or ""), mchf_max_it=mchf_max_it, varied=varied, term=term,
                           jj_varied=jj_varied, inp=None if ref is None else f"{ref.name}.bsw",
                           ci=ci, extra=hf_args)
         self.specs.append(spec)
@@ -238,11 +280,11 @@ class Target:
     # ------------------------------------------------------------------ runs
     def _hf_args(self, spec: ConfigSpec) -> list[str]:
         shells = []
-        for c in _confs(spec):
+        for c in _all_confs(spec):
             shells += [io.shell_name(n, l) for n, l, _ in io.parse_config(c) if io.shell_name(n, l) not in shells]
         args = [spec.name, f"z={self.ion.z}", f"core={self.core}", f"peel={' '.join(shells)}",
                 f"term={spec.term}", f"varied={spec.varied}", f"max_it={self.max_it}"]
-        if len(_confs(spec)) == 1:
+        if len(_all_confs(spec)) == 1:
             args.append(f"conf={io.to_dbsr_conf(spec.conf)}")
         if spec.inp:
             args.append(f"inp={spec.inp}")
@@ -250,11 +292,27 @@ class Target:
         args += [f"{k}={v}" for k, v in {**self.hf_args, **spec.extra}.items()]
         return args
 
+    def _run_mchf(self, spec: ConfigSpec, sb: Path):
+        """Optimise the correlation orbitals for the physical states (see add())."""
+        cf = io.CFile.read(sb / f"{spec.name}.c")
+        nphys = _n_physical(spec, cf)
+        levels = ";".join(f"{ib}," + ",".join(str(k) for k in range(1, nphys[ib] + 1))
+                          for ib in sorted(nphys) if nphys[ib] > 0)
+        shutil.copy(sb / f"{spec.name}.knot", sb / "knot.dat")
+        run("dbsr_breit3", [f"{spec.name}.c"], sb, echo=self.echo, log=f"{spec.name}.breit.out")
+        varied = spec.mchf_varied or spec.varied
+        run("dbsr_mchf", [spec.name, f"varied={varied}", "eol=5", f"levels={levels}",
+                          f"max_it={spec.mchf_max_it}"], sb, echo=self.echo, log=f"{spec.name}.mchf.out")
+        # dbsr_mchf writes only the optimised levels to name.j; recompute all
+        # eigenvectors with the new orbitals (dbsr_hf jj step, orbitals fixed)
+        run("dbsr_hf", [spec.name, "term=jj", "varied=none", f"inp={spec.name}.bsw", "max_it=1",
+                        *self._grid_args()], sb, echo=self.echo, log=f"{spec.name}.hf3.out")
+
     def _write_ls(self, spec: ConfigSpec, path: Path):
         """dbsr_hf input with several LS configurations (name.LS): atom, core in
         4-character columns, one configuration per line, '*'."""
         lines = [self.ion.symbol, "".join(f"{c:>4s}" for c in self.core_shells)]
-        for c in _confs(spec):
+        for c in _all_confs(spec):
             lines.append("".join(f"{io.shell_name(n, l):>4s}({q:2d})" for n, l, q in io.parse_config(c)))
         lines.append("*")
         path.write_text("\n".join(lines) + "\n")
@@ -273,11 +331,13 @@ class Target:
         sb.mkdir(parents=True)
         if spec.inp:
             shutil.copy(wd / spec.inp, sb / spec.inp)
-        if len(_confs(spec)) > 1:
+        if len(_all_confs(spec)) > 1:
             self._write_ls(spec, sb / f"{spec.name}.LS")
         run("dbsr_hf", self._hf_args(spec), sb, echo=self.echo, log=f"{spec.name}.hf1.out")
         jj = [spec.name, "term=jj", f"varied={spec.jj_varied}", f"max_it={self.max_it}", *self._grid_args()]
         run("dbsr_hf", jj, sb, echo=self.echo, log=f"{spec.name}.hf2.out")
+        if spec.correlation:
+            self._run_mchf(spec, sb)
         if spec.ci:
             run("dbsr_breit3", [f"{spec.name}.c"], sb, echo=self.echo, log=f"{spec.name}.breit.out")
             run("dbsr_ci3", [spec.name], sb, echo=self.echo, log=f"{spec.name}.ci.out")
@@ -319,7 +379,17 @@ class Target:
             sols = io.read_j(jfile)
             cf = io.CFile.read(cfile)
             count: dict[int, int] = {}
+            keep = None
+            if spec.correlation:
+                nphys = _n_physical(spec, cf)
+                blocks = _j_blocks(cf)
+                keep = {blocks[ib - 1][0]: n for ib, n in nphys.items()}
+                taken: dict = {}
             for sol in sorted(sols, key=lambda s: s.energy):
+                if keep is not None:
+                    taken[sol.ic1] = taken.get(sol.ic1, 0) + 1
+                    if taken[sol.ic1] > keep.get(sol.ic1, 0):
+                        continue
                 # 2J/parity from the CSFs themselves (the J column of .j files is not reliable)
                 two_j, parity = io.csf_jp(cf.csfs[sol.ic1 - 1][2])
                 sol.two_j = two_j
@@ -349,6 +419,12 @@ class Target:
         for 5s2 5p4 5d in Xe II): relaxation of the 5p core matters as much as
         that of the 5d orbital.  States without a group (``key`` -> None) keep
         their orbitals.  Returns {group: [state names]}.
+
+        Warning: states of the same J from different groups are then not
+        orthogonal, which the close-coupling programs do not allow (dbsr_hd3
+        stops with 'DPOTRF ... Cholesky factorization failed').  Use it for
+        structure (energies, oscillator strengths) only; for scattering targets
+        use ``Target.add(..., correlation=[...])`` instead.
         """
         spec = spec if isinstance(spec, ConfigSpec) else next(s for s in self.specs if s.name == spec)
         if varied is None:
