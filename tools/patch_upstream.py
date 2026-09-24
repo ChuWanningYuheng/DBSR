@@ -18,6 +18,9 @@ Patches
    ``Def_atom`` (200 chars) are raised to 2048 characters.
 3. File-name length ``ma = 80`` in the program modules -> 256
    (long paths to work directories).
+5. DBSR_MCHF: ``levels=``/``weights=`` lists (Character(280)) -> 2048, and
+   J-blocks without optimized levels are skipped in the diagonalization
+   (DSYEVX was called with IU = 0: "parameter number 10 had an illegal value").
 4. ZCOM/recup_a.f90: a comment ending with a backslash; if the file is ever
    run through cpp the next statement (``M3 = JP2(j-1)``) is lost.
 """
@@ -110,6 +113,19 @@ def main(root):
     replace(hf / "hf_def_conf_LS.f90", "Character(160) :: conf", f"Character({LONG}) :: conf")
     replace(hf / "dbsr_lib_dbs.f90", "Character(200) :: atom, core, conf",
             f"Character({LONG}) :: atom, core, conf", 1)
+
+    # dbsr_mchf: 'levels=' / 'weights=' lists were read into Character(280)
+    t = _read(prog / "DBSR_MCHF/def_blocks.f90")
+    t2 = re.sub(r"Character\(280\)", f"Character({LONG})", t)
+    if t2 == t:
+        raise PatchError("DBSR_MCHF/def_blocks.f90: Character(280) not found")
+    _write(prog / "DBSR_MCHF/def_blocks.f90", t2)
+
+    # dbsr_mchf: a J-block without optimized levels called DSYEVX with IU = 0
+    replace(prog / "DBSR_MCHF/diag.f90",
+            "      Call LAP_DSYEVX('V','L',nc,nc,HM,eval,k,info)",
+            "      if(k.eq.0) Return          ! no level of this block is optimized\n"
+            "      Call LAP_DSYEVX('V','L',nc,nc,HM,eval,k,info)", 1)
 
     # 3. file-name length in program modules
     n = 0
