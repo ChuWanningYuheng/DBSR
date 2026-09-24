@@ -137,8 +137,29 @@ class Scattering:
                     states=[io.TargetEntry(s.name) for s in self.states],
                     partial_waves=[(tj, p, None) for tj, p in self.partial_waves],
                     perturbers=[(k, Path(n).name) for k, n in self.perturbers]).write(wd / "target_jj")
-        io.write_par(wd / "dbsr_par", self.params)
+        io.write_par(wd / "dbsr_par", self.params, self.orth_conditions())
         self._save()
+
+    def orth_conditions(self) -> list[str]:
+        """Imposed orthogonality of the continuum to the correlation orbitals of
+        the target states (``< kd- | 6d- >=0``, read by dbsr_conf3).  dbsr_prep3
+        takes the physical orbitals from the leading CSF only, so without them
+        channels built on a correlation orbital duplicate other channels and the
+        overlap matrix is singular (dbsr_hd3: 'DPOTRF ... failed')."""
+        shells = []
+        for s in self.states:
+            for sh in s.correlation_orbitals or []:
+                if sh not in shells:
+                    shells.append(sh)
+        out = []
+        for sh in shells:
+            m = re.fullmatch(r"(\d+)([a-z])(-?)", sh)
+            if m is None:
+                raise ValueError(f"bad orbital name {sh!r}")
+            n, l, minus = m.groups()
+            j = "-" if minus else " "
+            out.append(f"< k{l}{j} |{n:>2s}{l}{j} >=0")
+        return out
 
     def _save(self):
         data = {"ion": [self.ion.element, self.ion.charge], "partial_waves": self.partial_waves,

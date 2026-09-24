@@ -31,6 +31,7 @@ class State:
     nist_label: str | None = None
     nist_no: int | None = None           # NIST level number (increasing energy)
     configs: list | None = None          # all configurations of its (CI) calculation
+    correlation_orbitals: list | None = None  # e.g. ['6d-', '6d']: continuum is kept orthogonal to them
 
     @property
     def J(self) -> float:
@@ -71,6 +72,18 @@ def _confs(spec: ConfigSpec) -> list[str]:
 def _all_confs(spec: ConfigSpec) -> list[str]:
     """Physical + correlation configurations."""
     return _confs(spec) + ([c.strip() for c in spec.correlation.split(" + ")] if spec.correlation else [])
+
+
+def _correlation_orbitals(spec: ConfigSpec) -> list[str]:
+    """jj subshells that occur only in the correlation configurations, e.g. ['6d-', '6d']."""
+    phys = {(n, l) for c in _confs(spec) for n, l, _ in io.parse_config(c)}
+    out = []
+    for c in _all_confs(spec)[len(_confs(spec)):]:
+        for n, l, _ in io.parse_config(c):
+            for sh in jj_subshells(n, l).split(","):
+                if (n, l) not in phys and sh not in out:
+                    out.append(sh)
+    return out
 
 
 def _n_physical(spec: ConfigSpec, cf) -> dict:
@@ -227,7 +240,9 @@ class Target:
         dependence of the physical orbital (a different 5d for different
         parent cores) while all states stay orthogonal (one orbital set, one
         diagonalisation), as required by the scattering programs.  Only the
-        physical states are kept.
+        physical states are kept.  In scattering runs the continuum is made
+        orthogonal to the correlation orbitals (otherwise different channels
+        generate the same (N+1)-electron functions and dbsr_hd3 fails).
 
         The first configuration is the reference: all its orbitals are
         optimised (``varied='all'``).  For the others, by default only the
@@ -398,7 +413,8 @@ class Target:
                 io.write_state(spec.name, sol, cf, self.workdir / f"{spec.name}.bsw", self.workdir / name)
                 conf = _dominant_config(sol, cf, _confs(spec))
                 states.append(State(name, conf, sol.label, two_j, parity, sol.energy, spec.name,
-                                    configs=_confs(spec) if len(_confs(spec)) > 1 else None))
+                                    configs=_confs(spec) if len(_confs(spec)) > 1 else None,
+                                    correlation_orbitals=_correlation_orbitals(spec) or None))
         states.sort(key=lambda s: s.energy)
         return states
 
