@@ -37,7 +37,7 @@ try:
     levels = db.nist.read_levels(args.nist) if args.nist else db.nist.fetch_levels(ion)
     db.nist.assign(tg.states, levels)
     use_exp = True
-except OSError as e:                                    # no internet
+except (OSError, RuntimeError) as e:                      # no internet or NIST unavailable
     warnings.warn(f"NIST not available ({e}); using computed thresholds")
     use_exp = False
 print(tg.table())

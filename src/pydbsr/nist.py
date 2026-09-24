@@ -47,29 +47,60 @@ def _cache_dir() -> Path:
     return d
 
 
+_UA = "Mozilla/5.0 (X11; Linux x86_64) pydbsr (atomic data; +https://github.com/ChuWanningYuheng/DBSR)"
+
+
+def _asd_params(spectrum: str, fmt: int) -> dict:
+    return {
+        "de": "0", "spectrum": spectrum, "units": "0", "format": str(fmt), "output": "0",
+        "page_size": "15", "multiplet_ordered": "0", "conf_out": "on", "term_out": "on",
+        "level_out": "on", "unc_out": "0", "j_out": "on", "lande_out": "0", "perc_out": "0",
+        "biblio": "0", "temp": "", "submit": "Retrieve Data",
+    }
+
+
 def fetch_levels(spectrum: str | Ion, cache: bool = True, timeout: float = 60) -> list[Level]:
-    """Download energy levels of ``spectrum`` (e.g. ``'Xe II'`` or ``Ion('Xe', 1)``) in cm-1."""
+    """Download energy levels of ``spectrum`` (e.g. ``'Xe II'`` or ``Ion('Xe', 1)``) in cm-1.
+
+    Tries the tab-delimited, CSV and ASCII outputs of the NIST ASD levels form.
+    If NIST answers with an HTML page instead of a table (maintenance, access
+    restrictions), a RuntimeError explains how to download the table by hand.
+    """
     if isinstance(spectrum, Ion):
         spectrum = spectrum.spectrum
     fname = _cache_dir() / ("nist_" + spectrum.replace(" ", "_") + ".tsv")
     if cache and fname.exists():
-        return parse_levels(fname.read_text())
-    params = {
-        "de": "0", "spectrum": spectrum, "submit": "Retrieve Data", "units": "0", "format": "3",
-        "output": "0", "page_size": "15", "multiplet_ordered": "0", "conf_out": "on",
-        "term_out": "on", "level_out": "on", "unc_out": "0", "j_out": "on", "lande_out": "0",
-        "perc_out": "0", "biblio": "0", "temp": "",
-    }
-    url = ASD_URL + "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers={"User-Agent": "pydbsr"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        text = r.read().decode("utf-8", errors="replace")
-    levels = parse_levels(text)
-    if not levels:
-        raise RuntimeError(f"NIST ASD returned no levels for {spectrum!r}:\n{text[:500]}")
-    if cache:
-        fname.write_text(text)
-    return levels
+        levels = parse_levels(fname.read_text())
+        if levels:
+            return levels
+        fname.unlink()                                     # bad cache from an old version
+    answers = []
+    for fmt in (3, 2, 1):
+        url = ASD_URL + "?" + urllib.parse.urlencode(_asd_params(spectrum, fmt))
+        req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept": "text/plain,text/html,*/*"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                text = r.read().decode("utf-8", errors="replace")
+        except OSError as e:
+            answers.append(f"format={fmt}: {e}")
+            continue
+        levels = parse_levels(text)
+        if levels:
+            if cache:
+                fname.write_text(text)
+            return levels
+        answers.append(f"format={fmt}: {_snippet(text)}")
+    raise RuntimeError(
+        f"could not get a level table for {spectrum!r} from NIST ASD.\n  " + "\n  ".join(answers) +
+        "\nDownload it by hand: https://physics.nist.gov/PhysRefData/ASD/levels_form.html -> spectrum "
+        f"'{spectrum}', 'Format output: Tab-delimited', Level units cm-1, Configuration/Term/J/Level on; "
+        "save the page as a .txt file and use pydbsr.nist.read_levels('file.txt').")
+
+
+def _snippet(text: str, n: int = 200) -> str:
+    t = re.sub(r"<[^>]*>", " ", text)
+    t = re.sub(r"\s+", " ", t).strip()
+    return (t[:n] + "...") if len(t) > n else t
 
 
 def read_levels(path) -> list[Level]:
@@ -95,8 +126,9 @@ def _parse_j(s: str) -> list[int]:
         if not part:
             continue
         if "/" in part:
-            a, b = part.split("/")
-            out.append(int(a))
+            a = part.split("/")[0].strip()
+            if a.isdigit():
+                out.append(int(a))
         else:
             try:
                 out.append(int(round(2 * float(part))))
@@ -138,28 +170,32 @@ def number_levels(levels: list[Level]) -> list[Level]:
     return levels
 
 
+def _strip_html(text: str) -> str:
+    m = re.search(r"<pre[^>]*>(.*?)</pre>", text, re.S | re.I)
+    if m:
+        text = m.group(1)
+    text = re.sub(r"<[^>]*>", "", text)
+    return text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+
+
 def parse_levels(text: str) -> list[Level]:
+    """Level table from NIST ASD output (tab, CSV or ASCII '|' format, also inside
+    HTML) or from a simple whitespace table ``config term J energy_cm``."""
+    if re.search(r"<\s*(html|body|pre|table|!doctype)", text[:5000], re.I):
+        text = _strip_html(text)
     lines = [l for l in text.splitlines() if l.strip()]
     if not lines:
         return []
-    delim = "\t" if "\t" in lines[0] else ("," if lines[0].count(",") >= 3 else None)
-    levels = []
-    if delim is None:            # simple whitespace table
-        for line in lines:
-            if line.lstrip().startswith("#"):
-                continue
-            f = line.split()
-            if len(f) < 4:
-                continue
-            e = _parse_energy(f[-1])
-            js = _parse_j(f[-2])
-            if e is None or not js:
-                continue
-            conf = f[0]
-            for tj in js:
-                levels.append(Level(conf, f[1] if len(f) > 4 else "", tj, e, _parity(conf)))
-        return number_levels(levels)
-    rows = list(csv.reader(_io.StringIO("\n".join(lines)), delimiter=delim))
+    hi = next((i for i, l in enumerate(lines) if re.search(r"configuration", l, re.I)
+               and re.search(r"\bJ\b", l)), None)
+    if hi is None:
+        return _parse_whitespace(lines)
+    head_line = lines[hi]
+    delim = "\t" if "\t" in head_line else ("|" if "|" in head_line else ",")
+    if delim == "|":
+        rows = [[c for c in l.split("|")] for l in lines[hi:]]
+    else:
+        rows = list(csv.reader(_io.StringIO("\n".join(lines[hi:])), delimiter=delim))
     head = [_clean(h).lower() for h in rows[0]]
 
     def col(*names):
@@ -170,18 +206,41 @@ def parse_levels(text: str) -> list[Level]:
         return None
     ic, it, ij, ie = col("configuration"), col("term"), col("j"), col("level")
     if ic is None or ij is None or ie is None:
-        raise ValueError(f"unrecognised NIST table header: {rows[0]}")
+        return []
+    levels = []
+    conf = term = ""
     for row in rows[1:]:
-        if len(row) <= max(ic, ij, ie):
+        if len(row) <= max(ic, ij, ie) or set("".join(row).strip()) <= set("-+ "):
             continue
-        conf = _clean(row[ic])
+        c = _clean(row[ic])
+        t = _clean(row[it]) if it is not None else ""
+        if c:
+            conf, term = c, t
+        elif t:
+            term = t
         e = _parse_energy(row[ie])
         js = _parse_j(row[ij])
-        if not conf or e is None or not js:
+        if not conf or e is None or not js or not nist_shells(conf):
             continue
-        term = _clean(row[it]) if it is not None else ""
         for tj in js:
             levels.append(Level(conf, term, tj, e, _parity(conf, term)))
+    return number_levels(levels)
+
+
+def _parse_whitespace(lines) -> list[Level]:
+    levels = []
+    for line in lines:
+        if line.lstrip().startswith("#"):
+            continue
+        f = line.split()
+        if len(f) < 4:
+            continue
+        e = _parse_energy(f[-1])
+        js = _parse_j(f[-2])
+        if e is None or not js or not nist_shells(f[0]):
+            continue
+        for tj in js:
+            levels.append(Level(f[0], f[1] if len(f) > 4 else "", tj, e, _parity(f[0])))
     return number_levels(levels)
 
 
