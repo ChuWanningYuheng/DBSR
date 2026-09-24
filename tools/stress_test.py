@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -143,7 +144,7 @@ def test_target(target_dir: Path, tmp: Path, nist_splitting_cm: float = 10537.0)
         par = {}
         for key in ("nuclear", "mbreit", "mode_SE", "mode_VP", "core"):
             line = next((x for x in txt.splitlines() if x.strip().startswith(key)), "")
-            par[key] = line.split("=", 1)[1].split("-")[0].strip() if "=" in line else "?"
+            par[key] = re.split(r"\s{2,}-\s", line.split("=", 1)[1])[0].strip() if "=" in line else "?"
         print(f"    Hamiltonian: Dirac-Coulomb, nucleus = {par['nuclear']}, mbreit = {par['mbreit']} "
               f"({'no Breit, no QED' if par['mbreit'] == '0' else 'Breit + QED (1st order)'}); core {par['core']}")
         check("finite (Fermi) nuclear charge distribution in the target", par["nuclear"].lower().startswith("fermi"),
