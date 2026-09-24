@@ -4,8 +4,10 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -94,19 +96,46 @@ def run(program: str, args: Sequence[str] = (), cwd: str | Path = ".", *,
         for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
             e[k] = str(threads)
     t0 = time.time()
-    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, errors="replace", env=e)
     lines = []
-    try:
-        for line in proc.stdout:
-            lines.append(line)
-            if echo:
-                sys.stdout.write(line)
-                sys.stdout.flush()
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        raise
+    timed_out = threading.Event()
+    posix = os.name == "posix"
+    with subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True, errors="replace", env=e, start_new_session=posix) as proc:
+
+        def _kill_all():
+            """Kill the program and its children (mpirun ranks, shells)."""
+            try:
+                if posix:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                else:
+                    proc.kill()
+            except (ProcessLookupError, PermissionError):
+                pass
+
+        timer = None
+        if timeout is not None:
+            def _kill():
+                timed_out.set()
+                _kill_all()
+            timer = threading.Timer(timeout, _kill)
+            timer.daemon = True
+            timer.start()
+        try:
+            for line in proc.stdout:
+                lines.append(line)
+                if echo:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+            proc.wait()
+        except BaseException:          # e.g. KeyboardInterrupt: do not leave the program running
+            _kill_all()
+            proc.wait()
+            raise
+        finally:
+            if timer is not None:
+                timer.cancel()
+    if timed_out.is_set():
+        raise subprocess.TimeoutExpired(cmd, timeout, output="".join(lines))
     out = "".join(lines)
     if log is not None:
         Path(cwd, log).write_text(f"$ {' '.join(cmd)}\n{out}")
@@ -206,8 +235,10 @@ class ResourcePool:
 def run_partial_waves(program: str, klsps: Iterable[int], workdir: str | Path, *,
                       args: Sequence[str] = (), jobs: int = 1, threads: int = 1,
                       echo: bool = False, progress: Callable[[str], None] | None = print,
-                      mpi: int | None = None) -> list[RunResult]:
-    """Run ``program klsp=k`` for every partial wave, ``jobs`` of them at a time.
+                      mpi: int | None = None,
+                      wave_args: Callable[[int], Sequence[str]] | None = None) -> list[RunResult]:
+    """Run ``program klsp=k`` for every partial wave, ``jobs`` of them at a time
+    (``wave_args(k)``: extra arguments for partial wave k).
 
     Each job runs in its own sandbox directory (so that programs writing
     fixed-name scratch/log files do not collide) and its outputs, which are
@@ -219,7 +250,8 @@ def run_partial_waves(program: str, klsps: Iterable[int], workdir: str | Path, *
         results = []
         for k in klsps:
             t = time.time()
-            results.append(run(program, [f"klsp1={k}", f"klsp2={k}", *args], workdir,
+            extra = list(wave_args(k)) if wave_args else []
+            results.append(run(program, [f"klsp1={k}", f"klsp2={k}", *args, *extra], workdir,
                                threads=threads, echo=echo, log=f"{program}.out.{k:03d}", mpi=mpi))
             if progress:
                 progress(f"  {program}: partial wave {k} done ({time.time() - t:.1f} s)")
@@ -227,8 +259,9 @@ def run_partial_waves(program: str, klsps: Iterable[int], workdir: str | Path, *
 
     def job(k):
         sb, copied = _sandbox(workdir, f"{program}_{k:03d}")
+        extra = list(wave_args(k)) if wave_args else []
         try:
-            r = run(program, [f"klsp1={k}", f"klsp2={k}", *args], sb, threads=threads,
+            r = run(program, [f"klsp1={k}", f"klsp2={k}", *args, *extra], sb, threads=threads,
                     log=f"{program}.out.{k:03d}", mpi=mpi)
         finally:
             _collect(sb, workdir, f"{k:03d}", copied)

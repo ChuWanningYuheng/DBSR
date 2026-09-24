@@ -20,6 +20,7 @@ from typing import Sequence
 
 from . import io
 from .atoms import Ion
+from .constants import EV_CM
 
 ASD_URL = "https://physics.nist.gov/cgi-bin/ASD/energy1.pl"
 LINES_URL = "https://physics.nist.gov/cgi-bin/ASD/lines1.pl"
@@ -325,7 +326,7 @@ def save_levels_csv(levels: Sequence[Level], path) -> Path:
         w.writerow(["No", "Configuration", "Term", "J", "Level (cm-1)", "Level (eV)"])
         for lv in sorted(levels, key=lambda l: (l.no or 0, l.energy_cm)):
             j = f"{lv.two_j}/2" if lv.two_j % 2 else str(lv.two_j // 2)
-            w.writerow([lv.no, lv.config, lv.term, j, f"{lv.energy_cm:.3f}", f"{lv.energy_cm / 8065.543937:.6f}"])
+            w.writerow([lv.no, lv.config, lv.term, j, f"{lv.energy_cm:.3f}", f"{lv.energy_cm / EV_CM:.6f}"])
     return path
 
 

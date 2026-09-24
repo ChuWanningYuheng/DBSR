@@ -45,6 +45,10 @@ class Scattering:
     jobs, threads : int
         Partial waves run ``jobs`` at a time, each with ``threads`` OpenMP/BLAS
         threads.  ``mpi=n`` uses the MPI programs where available.
+    mk_max : int, optional
+        Cap on the multipole index of the Slater integrals in dbsr_mat3.  By
+        default every multipole the partial wave needs is included
+        (:meth:`multipole_max`; dbsr_mat3 alone would stop at 7).
     """
 
     def __init__(self, target: Target | Sequence[State], workdir: str | Path, *,
@@ -54,7 +58,7 @@ class Scattering:
                  perturbers: Sequence[tuple[int, str]] = (),
                  exp_energies: bool = True, jobs: int = 1, threads: int = 1,
                  mpi: int | None = None, echo: bool = False,
-                 progress: Callable[[str], None] | None = print):
+                 progress: Callable[[str], None] | None = print, mk_max: int | None = None):
         if isinstance(target, Target):
             self.target_dir = target.workdir
             self.ion = target.ion
@@ -82,6 +86,7 @@ class Scattering:
         self.perturbers = list(perturbers)
         self.exp_energies = exp_energies
         self.jobs, self.threads, self.mpi = jobs, threads, mpi
+        self.mk_max = mk_max
         self.echo = echo
         self.progress = progress or (lambda s: None)
 
@@ -189,21 +194,99 @@ class Scattering:
         else:
             run("dbsr_conf3", [], self.workdir, echo=self.echo, log="dbsr_conf3.out")
 
-    def _pw(self, program, args=()):
+    def _pw(self, program, args=(), wave_args=None):
         klsps = range(1, self.nlsp + 1)
         self._log(f"{program}: {self.nlsp} partial waves, jobs={self.jobs}, threads={self.threads}")
         prog = self._prog(program)
         if prog != program:     # MPI: one partial wave at a time, all ranks
             return run_partial_waves(prog, klsps, self.workdir, args=args, jobs=1,
-                                     threads=self.threads, echo=self.echo, progress=self._log, mpi=self.mpi)
+                                     threads=self.threads, echo=self.echo, progress=self._log, mpi=self.mpi,
+                                     wave_args=wave_args)
         return run_partial_waves(program, klsps, self.workdir, args=args, jobs=self.jobs,
-                                 threads=self.threads, echo=self.echo, progress=self._log)
+                                 threads=self.threads, echo=self.echo, progress=self._log, wave_args=wave_args)
+
+    # ----------------------------------------------------------- completeness
+    _ORB = re.compile(r"\s*(\d+|k)([spdfghik])(-?)")
+
+    def _cfg_orbitals(self, klsp: int) -> list[tuple[bool, int]]:
+        """[(is_continuum, l)] of all core, bound and continuum orbitals in cfg.nnn."""
+        lines = (self.workdir / f"cfg.{klsp:03d}").read_text(encoding="latin-1").splitlines()
+        out, part = [], None
+        for line in lines:
+            if line.startswith("Core subshells"):
+                part = "core"
+                continue
+            if line.startswith("Peel subshells"):
+                part = "peel"
+                continue
+            if line.startswith("CSF"):
+                break
+            if part:
+                for i in range(0, len(line), 5):
+                    m = self._ORB.match(line[i:i + 5])
+                    if m:
+                        out.append((m.group(1) == "k", "spdfghik".index(m.group(2))))
+        return out
+
+    def multipole_max(self, klsp: int) -> int:
+        """Largest multipole k of the Slater integrals R^k needed in partial wave
+        ``klsp``: l(continuum)max + l(bound)max (exchange with the core and target
+        orbitals).  dbsr_mat3 drops all R^k with k > mk (default mk = 7), i.e.
+        part of the exchange for l >= 6 continuum orbitals; pydbsr passes this
+        value instead."""
+        orbs = self._cfg_orbitals(klsp)
+        lc = max([l for c, l in orbs if c], default=0)
+        lb = max([l for c, l in orbs if not c], default=0)
+        return max(lc + lb, 2 * lb)
+
+    def _mat_args(self, klsp: int) -> list[str]:
+        if "mk" in self.params:
+            return []
+        mk = self.multipole_max(klsp)
+        if self.mk_max is not None:
+            mk = min(mk, self.mk_max)
+        return [f"mk={mk}"]
+
+    def target_errors(self, klsp: int | None = None) -> dict:
+        """Target-state consistency reported by dbsr_mat3 (``mat_log.nnn``).
+
+        The target states must be orthonormal eigenstates of one N-electron
+        Hamiltonian.  Returns the largest deviations as (value, i, j), 1-based:
+        ``h`` off-diagonal <i|H|j>, ``h_diag`` <i|H|i> - E_i, ``s`` off-diagonal
+        <i|j>, ``s_diag`` <i|i> - 1.  Large ``h`` means that states computed in
+        separate calculations interact: put them into one CI calculation.
+        """
+        files = [self.workdir / f"mat_log.{klsp:03d}"] if klsp else sorted(self.workdir.glob("mat_log.[0-9][0-9][0-9]"))
+        best = {key: (0.0, 0, 0) for key in ("h", "h_diag", "s", "s_diag")}
+        for f in files:
+            sect = None
+            for line in f.read_text(encoding="latin-1").splitlines():
+                if line.startswith("Target hamiltonian errors"):
+                    sect = "h"
+                    continue
+                if line.startswith("Target overlaps errors"):
+                    sect = "s"
+                    continue
+                if sect is None or not line.strip():
+                    continue
+                parts = line.split()
+                try:
+                    i, j = int(parts[0]), int(parts[1])
+                    v = float(parts[3] if (sect == "h" and i == j) else parts[2])
+                except (ValueError, IndexError):
+                    sect = None
+                    continue
+                key = sect + ("_diag" if i == j else "")
+                if abs(v) > best[key][0]:
+                    best[key] = (abs(v), i, j)
+        return best
 
     def run_breit(self, **kw):
         return self._pw("dbsr_breit3", [f"{k}={v}" for k, v in kw.items()])
 
     def run_mat(self, **kw):
-        return self._pw("dbsr_mat3", [f"{k}={v}" for k, v in kw.items()])
+        wave_args = None if "mk" in kw else self._mat_args
+        return self._pw("dbsr_mat3", [f"{k}={v}" for k, v in kw.items()], wave_args=wave_args)
 
     def run_hd(self, itype: int = 0, **kw):
         args = [f"itype={itype}"]
@@ -234,14 +317,21 @@ class Scattering:
         text = (self.workdir / "target_jj").read_text(encoding="latin-1")
         nch = {int(m.group(1)): (int(m.group(2)), int(m.group(3)))
                for m in re.finditer(r"^\s*(\d+)\.\s+nch\s*=\s*(\d+)\s+nc\s*=\s*(\d+)", text, re.M)}
-        ns = int(io.read_knot(self.workdir / "knot.dat").get("ns", 150))
+        knot = io.read_knot(self.workdir / "knot.dat")
+        ns = int(knot.get("ns", 150))
+        ks = int(knot.get("ks", 9))
         out = []
         for k in range(1, self.nlsp + 1):
             n, nc = nch.get(k, (0, 0))
             khm = n * max(ns - 6, 1) + nc
             full = khm * khm * 8 / 1e9                     # one dense matrix, GB
+            try:
+                mk = int(self._mat_args(k)[0].split("=")[1]) if self._mat_args(k) else int(self.params["mk"])
+            except (FileNotFoundError, IndexError, KeyError, ValueError):
+                mk = 7
+            rk_gb = 4 * ns * ns * ks * ks * (mk + 1) * 8 / 1e9   # dbsr_mat3 Rk integrals
             out.append(dict(klsp=k, two_j=self.partial_waves[k - 1][0], parity=self.partial_waves[k - 1][1],
-                            nch=n, khm=khm, mat_gb=1.0 + 0.3 * full, hd_gb=1.0 + 2.6 * full,
+                            nch=n, khm=khm, mk=mk, mat_gb=1.0 + rk_gb + 0.3 * full, hd_gb=1.0 + 2.6 * full,
                             disk_gb=0.5 * full))
         return out
 
@@ -291,7 +381,7 @@ class Scattering:
             sb, copied = _sandbox(wd, f"wave_{k:03d}")
             try:
                 step(sb, "dbsr_breit3", [], 1, 1.0, k)
-                step(sb, "dbsr_mat3", [], 1, d["mat_gb"], k)
+                step(sb, "dbsr_mat3", self._mat_args(k), 1, d["mat_gb"], k)
                 step(sb, "dbsr_hd3", hd, hd_threads, d["hd_gb"], k)
                 if cleanup:
                     for f in (f"dbsr_mat.{k:03d}", f"int_bnk.{k:03d}"):
@@ -307,17 +397,34 @@ class Scattering:
                         (wd / f).unlink()
             return k, time.time() - t0
 
+        failed = []
         with ThreadPoolExecutor(max_workers=max(1, len(todo))) as ex:
-            futs = [ex.submit(job, d) for d in todo]
+            futs = {ex.submit(job, d): d for d in todo}
             for f in as_completed(futs):
-                k, t = f.result()
-                d = next(x for x in sizes if x["klsp"] == k)
-                self._log(f"  partial wave {k} (2J={d['two_j']}, {'+' if d['parity'] > 0 else '-'}, "
-                          f"{d['nch']} channels, ~{d['khm']}): done in {t / 60:.1f} min")
+                d = futs[f]
+                tag = f"partial wave {d['klsp']} (2J={d['two_j']}, {'+' if d['parity'] > 0 else '-'}, " \
+                      f"{d['nch']} channels, ~{d['khm']})"
+                try:
+                    _, t = f.result()
+                except Exception as e:           # keep the other partial waves running
+                    failed.append((d["klsp"], e))
+                    self._log(f"  {tag}: FAILED: {e}")
+                    continue
+                self._log(f"  {tag}: done in {t / 60:.1f} min")
         try:
             (wd / "_parallel").rmdir()
         except OSError:
             pass
+        errs = self.target_errors()
+        if errs["h"][0] > 1e-3:
+            v, i, j = errs["h"]
+            self._log(f"WARNING: target states {i} and {j} interact: <i|H|j> = {v:.2e} a.u. "
+                      f"({v * 27.211:.2f} eV) - states of the same parity from separate calculations; "
+                      f"compute them in one CI (Target.add([...]))")
+        if failed:
+            raise RuntimeError(f"{len(failed)} partial wave(s) failed: " +
+                               "; ".join(f"klsp={k}: {e}" for k, e in failed) +
+                               " - the finished ones are kept, call run_streamed again after fixing")
         return self
 
     # ----------------------------------------------------------- thresholds

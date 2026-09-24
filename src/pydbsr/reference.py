@@ -14,9 +14,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .constants import EV_CM
 from .nist import Level, _parity
-
-EV_CM = 8065.543937
 
 
 @dataclass

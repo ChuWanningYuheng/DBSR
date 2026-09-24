@@ -23,6 +23,11 @@ Patches
    (DSYEVX was called with IU = 0: "parameter number 10 had an illegal value").
 4. ZCOM/recup_a.f90: a comment ending with a backslash; if the file is ever
    run through cpp the next statement (``M3 = JP2(j-1)``) is lost.
+6. DBSR_BREIT3 (serial and MPI): the case name (Character(80)), the scratch
+   file name ``name.int_new`` (Character(40)) and the shell command
+   ``cat name.int_new >> name.int_res`` (Character(80)) overflowed for case
+   names longer than ~32 characters ("Fortran runtime error: End of record");
+   DBSR_MCHF/get_case: the command ``dbsr_breit3 name.c`` (Character(200)).
 """
 import re
 import sys
@@ -126,6 +131,18 @@ def main(root):
             "      Call LAP_DSYEVX('V','L',nc,nc,HM,eval,k,info)",
             "      if(k.eq.0) Return          ! no level of this block is optimized\n"
             "      Call LAP_DSYEVX('V','L',nc,nc,HM,eval,k,info)", 1)
+
+    # 6. dbsr_breit3 / dbsr_mchf: case names and shell commands
+    for d in ("DBSR_BREIT3", "DBSR_BREIT3_MPI"):
+        replace(prog / d / "mod_dbsr_breit.f90", "      Character(80) :: name",
+                "      Character(256) :: name", 1)
+        replace(prog / d / "mod_dbsr_breit.f90", "Character(40) :: AF_i = 'int_new'",
+                "Character(256) :: AF_i = 'int_new'", 1)
+    replace(prog / "DBSR_BREIT3/dbsr_breit.f90", "Character(80) :: cline", f"Character({LONG}) :: cline", 1)
+    replace(prog / "DBSR_BREIT3_MPI/dbsr_breit_mpi.f90", "Character(80) :: cline",
+            f"Character({LONG}) :: cline", 1)
+    replace(prog / "DBSR_MCHF/get_case.f90", "Character(200) :: A_core, A_conf, AC",
+            f"Character({LONG}) :: A_core, A_conf, AC", 1)
 
     # 3. file-name length in program modules
     n = 0

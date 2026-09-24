@@ -41,12 +41,15 @@ if (tdir / "pydbsr_target.json").exists():
     tg = db.Target.load(tdir)
 else:
     tg = db.Target(ion, core="[Kr]4d10", workdir=tdir, max_it=60, grid={"rmax": 50.0, "hmax": 0.5})
-    tg.add("5s2 5p5")                              # reference
-    # strongly mixed 5s5p6 - 5p4 5d: one CI calculation; the 6d correlation
-    # orbital (dbsr_mchf on the physical states) gives the term dependence of 5d
-    tg.add(["5s 5p6", "5s2 5p4 5d"], correlation=[] if args.no_corr else ["5s2 5p4 6d"])
-    for conf in ["5s2 5p4 6s", "5s2 5p4 6p"] + ([] if args.no_7s else ["5s2 5p4 7s"]):
-        tg.add(conf)
+    tg.add("5s2 5p5")                              # reference: all orbitals optimised
+    # all even-parity states in ONE CI calculation: 5s5p6 - 5p4 5d - 5p4 6s - 5p4 7s
+    # mix strongly, and states from separate calculations would interact with
+    # each other in the close-coupling equations (dbsr_mat3 'Target hamiltonian
+    # errors', up to 0.1 a.u. with separate runs).  The 6d correlation orbital
+    # (dbsr_mchf on the physical states) gives the term dependence of 5d.
+    even = ["5s 5p6", "5s2 5p4 5d", "5s2 5p4 6s"] + ([] if args.no_7s else ["5s2 5p4 7s"])
+    tg.add(even, correlation=[] if args.no_corr else ["5s2 5p4 6d"], mchf_max_it=150)
+    tg.add("5s2 5p4 6p")
     tg.compute(jobs=min(args.cores, 6))
 db.nist.assign(tg.states, ref.levels)              # NIST energies and level numbers from the xlsx
 tg.save()

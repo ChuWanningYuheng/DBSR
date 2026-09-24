@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import re
+
+import numpy as np
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -361,3 +363,77 @@ def partial_waves(nelc_target: int, jmax: float, jmin: float = None,
     if (tj_min % 2 == 1) != odd or (tj_max % 2 == 1) != odd:
         raise ValueError(f"J must be {'half-integer' if odd else 'integer'} for {nelc_target + 1} electrons")
     return [(tj, p) for tj in range(tj_min, tj_max + 1, 2) for p in parities]
+
+
+# ---------------------------------------------------------------------------
+# radial functions (large P and small Q components) of a bsw-file
+# ---------------------------------------------------------------------------
+@dataclass
+class RadialFunction:
+    """Dirac radial orbital: large component P(r), small component Q(r)."""
+    n: int
+    kappa: int
+    energy: float                # orbital energy (a.u.) stored in the bsw-file
+    r: "np.ndarray"
+    P: "np.ndarray"
+    Q: "np.ndarray"
+
+    @property
+    def l(self) -> int:
+        return self.kappa if self.kappa > 0 else -self.kappa - 1
+
+    @property
+    def name(self) -> str:
+        return f"{self.n}{L_SYMBOLS[self.l]}{'-' if self.kappa > 0 else ''}"
+
+    def norm(self) -> float:
+        """Integral of P^2 + Q^2 over r (cubic-spline quadrature)."""
+        from scipy.interpolate import CubicSpline
+        f = CubicSpline(self.r, self.P ** 2 + self.Q ** 2)
+        return float(f.integrate(self.r[0], self.r[-1]))
+
+
+def radial_functions(bsw, knot=None) -> list[RadialFunction]:
+    """P(r), Q(r) of all orbitals of a DBSR ``.bsw`` file on a GRASP grid.
+
+    Uses the DBSR utility ``bsw_rw`` (bsw -> GRASP w-file) in a scratch
+    directory; ``knot`` is the knot file of the calculation (default: ``knot.dat``
+    or ``<name>.knot`` next to the bsw-file)."""
+    import struct
+    import tempfile
+
+    import numpy as np
+
+    from .runner import run
+
+    bsw = Path(bsw).resolve()
+    if knot is None:
+        for c in (bsw.with_suffix(".knot"), bsw.parent / "knot.dat"):
+            if c.exists():
+                knot = c
+                break
+        else:
+            raise FileNotFoundError(f"no knot file for {bsw}")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        shutil.copy(knot, tmp / "knot.dat")
+        shutil.copy(bsw, tmp / "orb.bsw")
+        run("bsw_rw", ["orb.bsw"], tmp)
+        data = (tmp / "orb.w").read_bytes()
+    out, pos = [], 0
+
+    def rec():
+        nonlocal pos
+        n = struct.unpack_from("<i", data, pos)[0]
+        body = data[pos + 4:pos + 4 + n]
+        pos += n + 8
+        return body
+
+    if rec()[:6] != b"G92RWF":
+        raise ValueError("bsw_rw output is not a GRASP w-file")
+    while pos < len(data):
+        n, kappa, e, nr = struct.unpack("<iidi", rec()[:20])
+        pq = np.frombuffer(rec(), dtype="<f8")
+        r = np.frombuffer(rec(), dtype="<f8")
+        out.append(RadialFunction(n, kappa, e, r.copy(), pq[1:nr + 1].copy(), pq[nr + 1:2 * nr + 1].copy()))
+    return out

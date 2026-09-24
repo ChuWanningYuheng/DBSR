@@ -33,7 +33,7 @@ from typing import Sequence
 
 import numpy as np
 
-from .constants import AU_EV, K_B_EV, PI_A0_2_CM2
+from .constants import AU_EV, K_B_EV, PI_A0_2_CM2, RATE_UPS, V_EV_CM_S
 from .coulomb import coulomb_fg
 
 __all__ = ["HBlock", "HData", "read_h", "OuterRegion", "CollisionStrengths", "maxwell", "bugrova"]
@@ -183,12 +183,22 @@ def propagate_logderiv(Y, r0, r1, lfac, k2, z, cf, nsteps):
 # K-matrix at one energy for one partial wave
 # ---------------------------------------------------------------------------
 def kmatrix(blk: HBlock, hd: HData, etot: float, r_match: float | None = None,
-            step: float | None = None, bsto: float | None = None):
-    """K-matrix (open x open) and the list of open channels at total energy ``etot`` (a.u.)."""
+            step: float | None = None, bsto: float | None = None, symmetrize: bool = True):
+    """K-matrix (open x open) and the list of open channels at total energy ``etot`` (a.u.).
+
+    The exact K is real symmetric (flux conservation, S unitary).  The computed
+    one is symmetric to the accuracy of the R-matrix, the propagation and the
+    Coulomb functions; it is symmetrised unless ``symmetrize=False`` (use that
+    to measure the asymmetry, see ``tools/stress_test.py``).
+    """
     a = hd.ra
     b = hd.rb if bsto is None else bsto
     e_ch = hd.etarg[blk.target]
     k2 = 2.0 * (etot - e_ch)
+    # exactly at a threshold (|k^2| < K2_THRESHOLD) the channel is taken as just
+    # open: the energy-normalised Coulomb functions have a finite limit for
+    # k -> 0+ (attractive field), the closed-channel solution has none (kappa = 0)
+    k2 = np.where(np.abs(k2) < K2_THRESHOLD, K2_THRESHOLD, k2)
     open_ = np.nonzero(k2 > 0)[0]
     if open_.size == 0:
         return np.zeros((0, 0)), open_
@@ -222,29 +232,68 @@ def kmatrix(blk: HBlock, hd: HData, etot: float, r_match: float | None = None,
         Gpm[closed, closed] = closed_logderiv(blk.l[closed], -k2[closed], hd.z, rm)
     X = np.linalg.solve(Gpm - Y @ Gm, -(Fpm - Y @ Fm))
     K = X[open_, :]
-    return 0.5 * (K + K.T), open_
+    return (0.5 * (K + K.T) if symmetrize else K), open_
+
+
+K2_THRESHOLD = 1e-10        # a.u. of k^2 (1.4e-9 eV): below this a channel counts as at threshold
 
 
 def closed_logderiv(l, kappa2, z, r):
     """Log-derivative at r of the exponentially decaying solution in closed channels.
 
-    WKB where it is accurate, otherwise the Whittaker function
-    W_{z/kappa, l+1/2}(2 kappa r) (mpmath), e.g. just below a threshold where
-    the closed channel is still classically allowed at r.
+    Four-term WKB series of the Riccati equation y' + y^2 = Q,
+    Q = kappa^2 + l(l+1)/r^2 - 2z/r, where its last term is below ``_WKB_TOL``
+    relative; otherwise the Whittaker function W_{z/kappa, l+1/2}(2 kappa r)
+    (mpmath; cached, since the same (l, kappa^2) recurs in many partial waves
+    at one energy).
     """
     l = np.atleast_1d(l).astype(float)
     kappa2 = np.atleast_1d(kappa2).astype(float)
-    lfac = l * (l + 1.0)
-    q2 = kappa2 + lfac / r ** 2 - 2.0 * z / r
-    dq2 = -2.0 * lfac / r ** 3 + 2.0 * z / r ** 2
-    out = np.empty_like(q2)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        q = np.sqrt(q2)
-        wkb_ok = (q2 > 0) & (np.abs(dq2) / (2.0 * np.abs(q2) ** 1.5) < 1e-3) & (q * r > 10.0)
-    out[wkb_ok] = -q[wkb_ok] - dq2[wkb_ok] / (4.0 * q2[wkb_ok])
-    for i in np.nonzero(~wkb_ok)[0]:
-        out[i] = _whittaker_logderiv(l[i], kappa2[i], z, r)
+    if np.any(kappa2 <= 0):
+        raise ValueError("closed_logderiv: kappa^2 must be > 0 (channel below its threshold)")
+    y, ok = _wkb_series(l * (l + 1.0), kappa2, z, r)
+    out = np.where(ok, y, 0.0)
+    for i in np.nonzero(~ok)[0]:
+        out[i] = _whittaker_cached(float(l[i]), float(kappa2[i]), float(z), float(r))
     return out
+
+
+_WKB_TOL = 1e-8                 # relative size of the last WKB term (error ~2e-8)
+
+
+def _wkb_series(L, kappa2, z, r):
+    """y = y0 + y1 + y2 + y3 for the decaying solution and a mask where it is accurate."""
+    Q = kappa2 + L / r ** 2 - 2.0 * z / r
+    Q1 = -2.0 * L / r ** 3 + 2.0 * z / r ** 2
+    Q2 = 6.0 * L / r ** 4 - 4.0 * z / r ** 3
+    Q3 = -24.0 * L / r ** 5 + 12.0 * z / r ** 4
+    pos = Q > 0
+    Qs = np.where(pos, Q, 1.0)
+    q = np.sqrt(Qs)
+    y0 = -q
+    y1 = -Q1 / (4.0 * Qs)
+    N = 5.0 * Q1 ** 2 - 4.0 * Qs * Q2
+    D = 32.0 * Qs ** 2.5
+    y2 = N / D
+    dN = 6.0 * Q1 * Q2 - 4.0 * Qs * Q3
+    dD = 80.0 * Qs ** 1.5 * Q1
+    y3 = (dN / D - N * dD / D ** 2 + 2.0 * y1 * y2) / (2.0 * q)
+    y = y0 + y1 + y2 + y3
+    ok = pos & (np.abs(y3) < _WKB_TOL * np.abs(y)) & (np.abs(y2) < 1e-3 * np.abs(y))
+    return y, ok
+
+
+_WCACHE: dict = {}
+
+
+def _whittaker_cached(l, kappa2, z, r):
+    key = (l, kappa2, z, r)
+    v = _WCACHE.get(key)
+    if v is None:
+        if len(_WCACHE) > 100000:
+            _WCACHE.clear()
+        v = _WCACHE[key] = _whittaker_logderiv(l, kappa2, z, r)
+    return v
 
 
 def _whittaker_logderiv(l, kappa2, z, r):
@@ -254,7 +303,8 @@ def _whittaker_logderiv(l, kappa2, z, r):
     x = 2 * kappa * r
     with mp.workdps(30):
         w = mp.whitw(k, m, x)
-        dw = mp.diff(lambda t: mp.whitw(k, m, t), x)
+        w1 = mp.whitw(k + 1, m, x)
+        dw = (0.5 - k / x) * w - w1 / x          # DLMF 13.15.23:  x W' = (x/2 - k) W - W_{k+1}
     return float(2 * kappa * dw / w)
 
 
@@ -365,7 +415,7 @@ class CollisionStrengths:
         ups = self.upsilon(i, j, T)
         de = self.thresholds[j] - self.thresholds[i]
         boltz = np.exp(-np.maximum(de, 0) / (K_B_EV * T))
-        return 8.629e-6 / (self.g[i] * np.sqrt(T)) * ups * boltz
+        return RATE_UPS / (self.g[i] * np.sqrt(T)) * ups * boltz
 
     def rate_eedf(self, i, j, eedf) -> float:
         """Rate coefficient (cm^3/s) for i -> j with an electron energy distribution:
@@ -378,7 +428,7 @@ class CollisionStrengths:
         e = self.incident_energy(i)
         sig = np.nan_to_num(self.sigma(i, j), nan=0.0)
         m = e > 0
-        v = 5.930969e7 * np.sqrt(e[m])                       # electron speed, cm/s
+        v = V_EV_CM_S * np.sqrt(e[m])                        # electron speed, cm/s
         f = sig[m] * v * eedf(e[m])
         return float(np.trapezoid(f, e[m]) if hasattr(np, "trapezoid") else np.trapz(f, e[m]))
 
