@@ -92,6 +92,28 @@ def _dominant_config(sol, cf, confs: list[str]) -> str:
     return max(w, key=w.get) if w else confs[0]
 
 
+def _core_from_label(s) -> str | None:
+    """Parent core from a NIST label: '5p4(1D2)5d 2[2] J=5/2' -> '(1D2)',
+    '5s2.5p3.(2P*).6p 1D' -> '(2P*)'; None if there is none."""
+    m = re.search(r"\(([^()]*)\)", s.nist_label or "")
+    return f"({m.group(1)})" if m else None
+
+
+def _safe(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "", name) or "g"
+
+
+def _j_blocks(cf) -> list[tuple[int, int]]:
+    """J blocks of a c-file in file order: [(first, last)] CSF indices (1-based)."""
+    js = [io.csf_jp(c[2]) for c in cf.csfs]
+    out, start = [], 0
+    for i in range(1, len(js) + 1):
+        if i == len(js) or js[i] != js[start]:
+            out.append((start + 1, i))
+            start = i
+    return out
+
+
 def jj_subshells(n: int, l: int) -> str:
     """'6p' -> '6p-,6p': in DBSR notation 'nl' is j = l+1/2 only and 'nl-' is j = l-1/2."""
     nl = io.shell_name(n, l)
@@ -309,6 +331,87 @@ class Target:
                                     configs=_confs(spec) if len(_confs(spec)) > 1 else None))
         states.sort(key=lambda s: s.energy)
         return states
+
+    # ------------------------------------------------------ term dependence
+    def refine(self, spec: str | ConfigSpec, varied: str | None = None,
+               key: Callable[[State], str | None] | None = None, max_it: int = 40,
+               min_states: int = 1, progress: Callable[[str], None] | None = print) -> dict:
+        """Term-dependent orbitals for one configuration (``spec``, a name or
+        :class:`ConfigSpec`): its states are divided into groups (by default by
+        the parent core in the NIST label, e.g. '(1D2)'; run
+        :func:`pydbsr.nist.assign` first) and for every group the orbitals
+        ``varied`` are re-optimised with dbsr_mchf for the states of that group
+        only (statistical weights).  Each state then keeps the orbitals of its
+        group; DBSR treats the resulting non-orthogonal orbital sets.
+
+        ``varied`` defaults to the orbitals optimised for the configuration plus
+        the open shells of the reference configuration (e.g. ``'5d-,5d,5p-,5p'``
+        for 5s2 5p4 5d in Xe II): relaxation of the 5p core matters as much as
+        that of the 5d orbital.  States without a group (``key`` -> None) keep
+        their orbitals.  Returns {group: [state names]}.
+        """
+        spec = spec if isinstance(spec, ConfigSpec) else next(s for s in self.specs if s.name == spec)
+        if varied is None:
+            ref = self.specs[0]
+            open_ref = [(n, l) for c in _confs(ref) for n, l, q in io.parse_config(c) if q != 2 * (2 * l + 1)]
+            extra = ",".join(jj_subshells(n, l) for n, l in dict.fromkeys(open_ref))
+            varied = ",".join(x for x in [spec.varied if spec.varied not in ("none", "all") else "", extra] if x)
+        varied = expand_varied(varied)
+        key = key or _core_from_label
+        wd = self.workdir
+        cf = io.CFile.read(wd / f"{spec.name}.c")
+        blocks = _j_blocks(cf)
+        block_of_j = {io.csf_jp(cf.csfs[a - 1][2])[0]: ib for ib, (a, _) in enumerate(blocks, 1)}
+        sols = io.read_j(wd / f"{spec.name}.j")
+        members = [s for s in self.states if s.source == spec.name or s.source.startswith(spec.name + "__")]
+        groups: dict = {}
+        for s in members:
+            g = key(s)
+            if g is not None:
+                groups.setdefault(g, []).append(s)
+        groups = {g: v for g, v in groups.items() if len(v) >= min_states}
+        base = wd / "_refine" / spec.name
+        if base.exists():
+            shutil.rmtree(base)
+        base.mkdir(parents=True)
+        for ext in (".c", ".bsw"):
+            shutil.copy(wd / f"{spec.name}{ext}", base / f"{spec.name}{ext}")
+        knot = wd / f"{spec.name}.knot"
+        shutil.copy(knot if knot.exists() else wd / f"{self.specs[0].name}.knot", base / "knot.dat")
+        run("dbsr_breit3", [f"{spec.name}.c"], base, log="breit.out")
+
+        def rank(s):                                   # energy rank of the state within its J block
+            return int(s.name.rsplit("_", 1)[1])
+
+        for g, sts in groups.items():
+            gname = _safe(g)
+            sb = base / gname
+            sb.mkdir()
+            for f in (f"{spec.name}.c", f"{spec.name}.bsw", f"{spec.name}.bnk", "knot.dat"):
+                shutil.copy(base / f, sb / f)
+            lev: dict = {}
+            for s in sts:
+                lev.setdefault(block_of_j[s.two_j], []).append(rank(s))
+            levels = ";".join(f"{b}," + ",".join(map(str, sorted(v))) for b, v in sorted(lev.items()))
+            if progress:
+                progress(f"refine {spec.name} {g}: {len(sts)} states, varied={varied}")
+            run("dbsr_mchf", [spec.name, f"varied={varied}", "eol=5", f"levels={levels}",
+                              f"max_it={max_it}"], sb, log="mchf.out")
+            new = io.read_j(sb / f"{spec.name}.j")
+            bsw = wd / f"{spec.name}__{gname}.bsw"
+            shutil.copy(sb / f"{spec.name}.bsw", bsw)
+            for s in sts:
+                a = blocks[block_of_j[s.two_j] - 1][0]
+                old = sorted([x for x in sols if x.ic1 == a], key=lambda x: x.energy)[rank(s) - 1]
+                cand = [x for x in new if x.ic1 == a]
+                best = max(cand, key=lambda x: abs(sum(p * q for p, q in zip(x.coefs, old.coefs))))
+                io.write_state(spec.name, best, cf, bsw, wd / s.name)
+                s.energy = best.energy
+                s.source = f"{spec.name}__{gname}"
+        shutil.rmtree(base)
+        self.states.sort(key=lambda s: s.energy)
+        self.save()
+        return {g: [s.name for s in v] for g, v in groups.items()}
 
     # --------------------------------------------------------------- queries
     @property
