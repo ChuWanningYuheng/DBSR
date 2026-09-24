@@ -28,6 +28,7 @@ p.add_argument("--hd-threads", type=int, default=16, help="threads of one dbsr_h
 p.add_argument("--emax", type=float, default=60.0, help="max electron energy, eV")
 p.add_argument("--de", type=float, default=0.0136, help="energy step, eV (paper: 0.0136 = 0.001 Ry)")
 p.add_argument("--no-7s", action="store_true", help="drop 5p4 7s (60 instead of 68 states)")
+p.add_argument("--no-refine", action="store_true", help="no term-dependent 5d/5p orbitals")
 args = p.parse_args()
 
 wd = Path(args.workdir)
@@ -39,11 +40,16 @@ tdir = wd / "target"
 if (tdir / "pydbsr_target.json").exists():
     tg = db.Target.load(tdir)
 else:
-    tg = db.Target(ion, core="[Kr]4d10", workdir=tdir, max_it=40, grid={"rmax": 50.0, "hmax": 0.5})
-    for conf in ["5s2 5p5", "5s 5p6", "5s2 5p4 6s", "5s2 5p4 5d", "5s2 5p4 6p"] + ([] if args.no_7s else ["5s2 5p4 7s"]):
+    tg = db.Target(ion, core="[Kr]4d10", workdir=tdir, max_it=60, grid={"rmax": 50.0, "hmax": 0.5})
+    tg.add("5s2 5p5")                              # reference
+    tg.add(["5s 5p6", "5s2 5p4 5d"])               # strongly mixed: one CI calculation
+    for conf in ["5s2 5p4 6s", "5s2 5p4 6p"] + ([] if args.no_7s else ["5s2 5p4 7s"]):
         tg.add(conf)
     tg.compute(jobs=min(args.cores, 6))
-db.nist.assign(tg.states, ref.levels)          # NIST energies and level numbers from the xlsx
+    db.nist.assign(tg.states, ref.levels)          # NIST energies/labels (needed for the core groups)
+    if not args.no_refine:
+        tg.refine("5s1__5p4_5d1")                  # term-dependent 5d, 5p for every parent core
+db.nist.assign(tg.states, ref.levels)              # NIST energies and level numbers from the xlsx
 tg.save()
 print(tg.table())
 states = [s for s in tg.states if s.nist_no is not None]
