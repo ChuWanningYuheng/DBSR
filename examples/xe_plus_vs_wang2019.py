@@ -49,7 +49,9 @@ else:
     # (dbsr_mchf on the physical states) gives the term dependence of 5d.
     even = ["5s 5p6", "5s2 5p4 5d", "5s2 5p4 6s"] + ([] if args.no_7s else ["5s2 5p4 7s"])
     tg.add(even, correlation=[] if args.no_corr else ["5s2 5p4 6d"], mchf_max_it=150)
-    tg.add("5s2 5p4 6p")
+    # odd parity: ground 5s2 5p5 and 5p4 6p in one CI as well (the reference
+    # states are replaced by these; its orbitals remain the input)
+    tg.add(["5s2 5p5", "5s2 5p4 6p"])
     tg.compute(jobs=min(args.cores, 6))
 db.nist.assign(tg.states, ref.levels)              # NIST energies and level numbers from the xlsx
 tg.save()

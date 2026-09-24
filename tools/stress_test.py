@@ -171,25 +171,28 @@ def test_target(target_dir: Path, tmp: Path, nist_splitting_cm: float = 10537.0)
               f"e(1s) = {e['1s']:.3f} a.u.")
         check("inner-shell spin-orbit splitting from the Dirac equation", e["2p"] - e["2p-"] > 5.0,
               f"{(e['2p'] - e['2p-']) * 27.211386:.1f} eV")
-    j32 = [s for s in tg.states if s.source == ref and s.two_j == 3]
-    j12 = [s for s in tg.states if s.source == ref and s.two_j == 1]
+    ref_conf = tg.specs[0].conf
+    j32 = sorted((s for s in tg.states if s.config == ref_conf and s.two_j == 3), key=lambda s: s.energy)
+    j12 = sorted((s for s in tg.states if s.config == ref_conf and s.two_j == 1), key=lambda s: s.energy)
     if j32 and j12:
         split = (j12[0].energy - j32[0].energy) * io_au_cm()
         rel = abs(split - nist_splitting_cm) / nist_splitting_cm
         check("5p5 2P1/2 - 2P3/2 splitting (ab initio) vs NIST", rel < 0.05,
               f"{split:.0f} cm-1 vs {nist_splitting_cm:.0f} cm-1 ({100 * rel:.1f} %)")
-    # grid convergence of the reference calculation
+    # grid convergence of the reference calculation (hi = 0.25/Z -> 0.05/Z)
+    base_sols = sorted(io.read_j(target_dir / f"{ref}.j"), key=lambda s: s.energy)
     d = tmp / "gridconv"
     d.mkdir()
     base = [a for a in tg._hf_args(tg.specs[0]) if not a.startswith(("hi=", "he="))]
     run("dbsr_hf", [*base, *tg._grid_args(), "hi=0.05", "he=0.1"], d)
     run("dbsr_hf", [ref, "term=jj", "varied=none", "max_it=1", *tg._grid_args(), "hi=0.05", "he=0.1"], d)
     sols = sorted(io.read_j(d / f"{ref}.j"), key=lambda s: s.energy)
-    if len(sols) >= 2 and j32 and j12:
-        split2 = (sols[1].energy - sols[0].energy) * io_au_cm()
+    if len(sols) >= 2 and len(base_sols) >= 2:
+        s1 = (base_sols[1].energy - base_sols[0].energy) * io_au_cm()
+        s2 = (sols[1].energy - sols[0].energy) * io_au_cm()
         check("fine structure converged w.r.t. the B-spline grid (hi 0.25 -> 0.05)",
-              abs(split2 - split) < 5.0, f"{split:.1f} vs {split2:.1f} cm-1; "
-              f"E_tot {j32[0].energy:.6f} vs {sols[0].energy:.6f} a.u.")
+              abs(s2 - s1) < 5.0, f"{s1:.1f} vs {s2:.1f} cm-1; "
+              f"E_tot {base_sols[0].energy:.6f} vs {sols[0].energy:.6f} a.u.")
 
 
 def io_au_cm():

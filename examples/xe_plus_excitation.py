@@ -26,10 +26,11 @@ ion = db.Ion("Xe", 1)                                   # Xe+ : Z = 54, N = 53
 # grid: R-matrix radius 50 a0, B-spline step <= 0.5 a0 at large r (electrons up to ~40-50 eV)
 tg = db.Target(ion, core="[Kr]4d10", workdir="xe_target", max_it=40, grid={"rmax": 50.0, "hmax": 0.5})
 tg.add("5s2 5p5")          # reference: all orbitals optimised
-tg.add("5s 5p6")           # 5s, 5p from the reference
-tg.add("5s2 5p4 5d")       # only 5d optimised
-tg.add("5s2 5p4 6s")       # only 6s
-tg.add("5s2 5p4 6p")       # only 6p
+# states of one parity in one CI calculation: orthogonal and non-interacting
+# target states (otherwise dbsr_mat3 reports 'Target hamiltonian errors');
+# 6d = correlation orbital for the term dependence of 5d
+tg.add(["5s 5p6", "5s2 5p4 5d", "5s2 5p4 6s"], correlation=["5s2 5p4 6d"])
+tg.add(["5s2 5p5", "5s2 5p4 6p"])   # replaces the reference states
 tg.compute(jobs=4)          # dbsr_hf (LS -> jj) + splitting into J-states (jcfile)
 
 # ---------------------------------------------------------------- NIST levels

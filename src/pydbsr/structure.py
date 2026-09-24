@@ -245,10 +245,13 @@ class Target:
         generate the same (N+1)-electron functions and dbsr_hd3 fails).
 
         The first configuration is the reference: all its orbitals are
-        optimised (``varied='all'``).  For the others, by default only the
-        orbitals absent from the reference are optimised and the reference
-        orbitals are used as input, which keeps the orbital set compact and
-        consistent (as in the DBSR examples).
+        optimised (``varied='all'``).  A later list may contain the reference
+        configuration itself (``['5s2 5p5', '5s2 5p4 6p']``): then the states
+        of that parity come from one CI calculation (orthogonal, not
+        interacting) and the reference states are replaced by them.  For the
+        others, by default only the orbitals absent from the reference are
+        optimised and the reference orbitals are used as input, which keeps the
+        orbital set compact and consistent (as in the DBSR examples).
 
         Shell names in ``varied`` are non-relativistic ('6p', '5d') and are
         expanded to both jj subshells ('6p-,6p'): in DBSR notation '6p' alone
@@ -387,9 +390,25 @@ class Target:
         self.save()
         return self.states
 
+    def superseded(self) -> set[str]:
+        """Specs whose physical configurations all belong to a later CI calculation
+        (e.g. the reference 5s2 5p5 when ['5s2 5p5', '5s2 5p4 6p'] is added):
+        their states are replaced by those of the larger calculation, their
+        orbitals are still used as input."""
+        def key(spec):
+            return {tuple(sorted(io.parse_config(c))) for c in _confs(spec)}
+        out = set()
+        for i, a in enumerate(self.specs):
+            if any(key(a) <= key(b) for b in self.specs[i + 1:]):
+                out.add(a.name)
+        return out
+
     def _split_states(self) -> list[State]:
         states = []
+        skip = self.superseded()
         for spec in self.specs:
+            if spec.name in skip:
+                continue
             jfile, cfile = self.workdir / f"{spec.name}.j", self.workdir / f"{spec.name}.c"
             sols = io.read_j(jfile)
             cf = io.CFile.read(cfile)

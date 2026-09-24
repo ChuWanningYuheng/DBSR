@@ -17,3 +17,13 @@ def test_orth_conditions_format(tmp_path):
     # columns read by read_orth_jj: Aort(2:6), Aort(8:12), Aort(15:15)
     assert lines == ["< kd- | 6d- >=0", "< kd  | 6d  >=0"]
     assert all(line[6] == "|" and line[14] == "0" for line in lines)
+
+
+def test_superseded_reference(tmp_path):
+    from pydbsr import Ion, Target
+    tg = Target(Ion("Xe", 1), core="[Kr]4d10", workdir=tmp_path)
+    tg.add("5s2 5p5")
+    tg.add(["5s 5p6", "5s2 5p4 5d"])
+    tg.add(["5s2 5p5", "5s2 5p4 6p"])
+    assert tg.superseded() == {tg.specs[0].name}
+    assert tg.specs[2].varied == "6p-,6p"
