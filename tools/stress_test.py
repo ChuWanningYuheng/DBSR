@@ -137,12 +137,17 @@ def test_target(target_dir: Path, tmp: Path, nist_splitting_cm: float = 10537.0)
     section(f"2. Xe+ target orbitals and fine structure ({target_dir})")
     tg = db.Target.load(target_dir)
     ref = tg.specs[0].name
-    log = (target_dir / "_hf" / ref / f"{ref}.log")
-    if log.exists():
-        txt = log.read_text(errors="replace")
-        for key in ("nuclear", "mbreit", "mode_SE", "mode_VP"):
-            line = next((l.strip() for l in txt.splitlines() if l.strip().startswith(key)), "?")
-            print(f"    dbsr_hf {line}")
+    inp = target_dir / f"{ref}.inp"
+    if inp.exists():
+        txt = inp.read_text(errors="replace")
+        par = {}
+        for key in ("nuclear", "mbreit", "mode_SE", "mode_VP", "core"):
+            line = next((x for x in txt.splitlines() if x.strip().startswith(key)), "")
+            par[key] = line.split("=", 1)[1].split("-")[0].strip() if "=" in line else "?"
+        print(f"    Hamiltonian: Dirac-Coulomb, nucleus = {par['nuclear']}, mbreit = {par['mbreit']} "
+              f"({'no Breit, no QED' if par['mbreit'] == '0' else 'Breit + QED (1st order)'}); core {par['core']}")
+        check("finite (Fermi) nuclear charge distribution in the target", par["nuclear"].lower().startswith("fermi"),
+              par["nuclear"])
     funcs = io.radial_functions(target_dir / f"{ref}.bsw", target_dir / f"{ref}.knot")
     norms = [abs(f.norm() - 1) for f in funcs]
     check("reference orbitals normalised", max(norms) < 1e-5, f"{len(funcs)} orbitals, max |1-N| = {max(norms):.1e}")
