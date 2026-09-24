@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -59,6 +60,29 @@ class ConfigSpec:
     extra: dict = field(default_factory=dict)
 
 
+def jj_subshells(n: int, l: int) -> str:
+    """'6p' -> '6p-,6p': in DBSR notation 'nl' is j = l+1/2 only and 'nl-' is j = l-1/2."""
+    nl = io.shell_name(n, l)
+    return nl if l == 0 else f"{nl}-,{nl}"
+
+
+def expand_varied(varied: str) -> str:
+    """Expand non-relativistic shell names in a dbsr_hf ``varied`` list to both jj
+    subshells ('6p' -> '6p-,6p'); 'all', 'none', 'nl-' and numbers are kept."""
+    if varied.strip().lower() in ("all", "none") or not varied.strip():
+        return varied
+    out = []
+    for item in varied.replace(" ", ",").split(","):
+        item = item.strip()
+        m = re.fullmatch(r"(\d+)([a-z])", item)
+        if m and m.group(2) in io.L_SYMBOLS[1:]:
+            full = jj_subshells(int(m.group(1)), io.L_SYMBOLS.index(m.group(2)))
+            out += [x for x in full.split(",") if x not in out]
+        elif item and item not in out:
+            out.append(item)
+    return ",".join(out)
+
+
 def _default_name(conf: str) -> str:
     """'5s2 5p4 5d' -> '5p4_5d1' (closed shells dropped when not alone)."""
     shells = io.parse_config(conf)
@@ -114,6 +138,12 @@ class Target:
         orbitals absent from the reference are optimised and the reference
         orbitals are used as input, which keeps the orbital set compact and
         consistent (as in the DBSR examples).
+
+        Shell names in ``varied`` are non-relativistic ('6p', '5d') and are
+        expanded to both jj subshells ('6p-,6p'): in DBSR notation '6p' alone
+        is only the p3/2 spinor, and a non-varied 6p1/2 stays at its crude
+        initial estimate (states with a 6p1/2 electron then come out several
+        eV too high).  Use 'nl-' explicitly to vary a single subshell.
         """
         n_core = sum(2 * (2 * io.L_SYMBOLS.index(s[-1]) + 1) for s in self.core_shells)
         n = n_core + io.config_nelectrons(conf)
@@ -128,10 +158,12 @@ class Target:
                 varied = "all"
             else:
                 ref_sh = {(n_, l) for n_, l, _ in io.parse_config(ref.conf)}
-                new = [io.shell_name(n_, l) for n_, l, _ in io.parse_config(conf) if (n_, l) not in ref_sh]
-                varied = ",".join(new) if new else "none"
-        elif not isinstance(varied, str):
-            varied = ",".join(varied)
+                new = [(n_, l) for n_, l, _ in io.parse_config(conf) if (n_, l) not in ref_sh]
+                varied = ",".join(jj_subshells(n_, l) for n_, l in new) if new else "none"
+        else:
+            if not isinstance(varied, str):
+                varied = ",".join(varied)
+            varied = expand_varied(varied)
         spec = ConfigSpec(conf=io.pretty_conf(conf), name=name, varied=varied, term=term,
                           jj_varied=jj_varied, inp=None if ref is None else f"{ref.name}.bsw",
                           ci=ci, extra=hf_args)
