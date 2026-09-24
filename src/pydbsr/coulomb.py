@@ -56,9 +56,11 @@ def coulomb_fg(l, eta, rho):
     F, G, Fp, Gp = (np.empty(n) for _ in range(4))
     lib = _load()
     bad = np.ones(n, dtype=bool)
-    # COULFG switches to (inaccurate) JWKB inside the turning point -> mpmath there
+    # COULFG switches to (inaccurate) JWKB inside the turning point, and its
+    # continued fraction CF2 does not converge for |eta| > ~2e4 (k^2 < ~1e-9 a.u.,
+    # right at a threshold; it then prints "CF2 HAS FAILED") -> mpmath there
     turning = eta + np.sqrt(eta ** 2 + l * (l + 1.0))
-    ok = rho > 1.02 * turning + 1e-3
+    ok = (rho > 1.02 * turning + 1e-3) & (np.abs(eta) < 1e4)
     if lib is not None and ok.any():
         idx = np.nonzero(ok)[0]
         m = idx.size

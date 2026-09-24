@@ -328,17 +328,19 @@ def test_outer(scat: Path):
     check("S-matrix unitary", unit_max < 1e-10, f"max |S^+S - 1| = {unit_max:.1e}")
     check("|T|^2 <= 4 (unitarity bound)", t2_max <= 4 + 1e-10, f"max |T|^2 = {t2_max:.4f}")
 
-    # continuity at the thresholds (limit from above, attractive Coulomb field)
+    # continuity at the thresholds (limit from above, attractive Coulomb field).
+    # NB: on a 1e-7 a.u. scale |T|^2 may vary fast: Rydberg resonances of a closed
+    # channel whose threshold lies just above (physical, not tested here)
     worst = 0.0
     for et in thr[1:]:
         for blk in hd.blocks:
             K1, op1 = kmatrix(blk, hd, et)
-            K2, op2 = kmatrix(blk, hd, et + 1e-9)
+            K2, op2 = kmatrix(blk, hd, et + 1e-12)
             if op1.size and np.array_equal(op1, op2):
                 T1, T2 = np.abs(t_matrix(K1)) ** 2, np.abs(t_matrix(K2)) ** 2
                 big = T2 > 1e-4 * max(T2.max(), 1e-30)
                 worst = max(worst, np.max(np.abs(T1[big] - T2[big]) / T2[big]))
-    check("|T|^2 continuous at every threshold (E_t vs E_t + 1e-9 a.u.)", worst < 1e-4,
+    check("|T|^2 continuous at every threshold (E_t vs E_t + 1e-12 a.u.)", worst < 1e-5,
           f"max rel. difference {worst:.1e} at {thr.size - 1} thresholds")
 
     out = db.OuterRegion(hd, names=names)
@@ -353,8 +355,10 @@ def test_outer(scat: Path):
     sig = cs1.sigma(0, 1)
     check("sigma: NaN below threshold only, no inf", not np.any(np.isinf(sig)))
 
-    # relativistic kinematics neglected outside r = a:  k^2 -> 2 e (1 + e / 2c^2)
-    probe = e0 + np.array([0.3, 0.6, 1.0, 1.6, 2.2])
+    # relativistic kinematics neglected outside r = a:  k^2 -> 2 e (1 + e / 2c^2).
+    # Tested above the highest threshold (no closed-channel resonances); below,
+    # the same correction only shifts the Rydberg resonances by e^2/2c^2.
+    probe = thr.max() + np.array([0.05, 0.3, 0.8, 1.5])
     worst = 0.0
     for etot in probe:
         e_ch = etot - hd.etarg
@@ -367,8 +371,10 @@ def test_outer(scat: Path):
                 T1, T2 = np.abs(t_matrix(K1)) ** 2, np.abs(t_matrix(K2)) ** 2
                 big = T1 > 1e-3 * T1.max()
                 worst = max(worst, np.max(np.abs(T2[big] - T1[big]) / T1[big]))
+    e_closed = 0.5                                   # a.u.: deepest closed channel of interest
     check("relativistic kinematics in the outer region negligible", worst < 1e-3,
-          f"max rel. change of |T|^2 = {worst:.1e} at E <= {(probe.max() - e0) * 27.211:.0f} eV")
+          f"max rel. change of |T|^2 = {worst:.1e} at E <= {(probe.max() - e0) * 27.211:.0f} eV; "
+          f"below thresholds: resonance shift <= {e_closed ** 2 / (2 * C_DBSR ** 2) * 27.211e3:.2f} meV")
 
     # propagation beyond a (long-range multipoles): converges with r_match
     etot = e0 + 1.2
