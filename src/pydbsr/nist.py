@@ -52,11 +52,11 @@ _UA = "Mozilla/5.0 (X11; Linux x86_64) pydbsr (atomic data; +https://github.com/
 
 
 def _asd_params(spectrum: str, fmt: int) -> dict:
+    # column switches are checkboxes: present = on; "=0" gives "Invalid Column Setting"
     return {
         "de": "0", "spectrum": spectrum, "units": "0", "format": str(fmt), "output": "0",
         "page_size": "15", "multiplet_ordered": "0", "conf_out": "on", "term_out": "on",
-        "level_out": "on", "unc_out": "0", "j_out": "on", "lande_out": "0", "perc_out": "0",
-        "biblio": "0", "temp": "", "submit": "Retrieve Data",
+        "level_out": "on", "j_out": "on", "temp": "", "submit": "Retrieve Data",
     }
 
 
