@@ -128,8 +128,9 @@ dbsr_program(dbsr_conf3  ${PROG_DIR}/DBSR_CONF3  SOURCES ${SRC_DBSR_CONF3}  LIBS
 dbsr_program(dbsr_breit3 ${PROG_DIR}/DBSR_BREIT3 SOURCES ${SRC_DBSR_BREIT3} LIBS zconfjj zcom)
 dbsr_program(dbsr_mat3   ${PROG_DIR}/DBSR_MAT3   SOURCES ${SRC_DBSR_MAT3}   LIBS dbs zconfjj zcom)
 dbsr_program(dbsr_hd3    ${PROG_DIR}/DBSR_HD3    SOURCES ${SRC_DBSR_HD3}    LIBS dbs zconfjj zcom)
-# DSYEVD with 64-bit integers from a run-time loaded ILP64 LAPACK (large matrices)
-target_sources(dbsr_hd3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/fortran/pydbsr_ilp64.c)
+# DSYEVD with 64-bit integers from a run-time loaded ILP64 LAPACK (large matrices);
+# pure Fortran: mixing C objects made the linker pick up conda's C sysroot with a system gfortran
+target_sources(dbsr_hd3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/fortran/pydbsr_ilp64.f90)
 target_link_libraries(dbsr_hd3 PRIVATE ${CMAKE_DL_LIBS})
 dbsr_program(dbsr_mult3  ${PROG_DIR}/DBSR_MULT3  SOURCES ${SRC_DBSR_MULT3}  LIBS zconfjj zcom)
 dbsr_program(dbsr_dmat3  ${PROG_DIR}/DBSR_DMAT3  SOURCES ${SRC_DBSR_DMAT3}  LIBS dbs zconfjj zcom)

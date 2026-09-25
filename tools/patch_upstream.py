@@ -32,7 +32,7 @@ Patches
    workspace (unblocked tridiagonalisation + QR: 6x more CPU than DSYEVD on
    the Xe+ J=0 matrices, poorly threaded).  Now DSYEVD for n <= 32000; for
    larger n (32-bit workspace overflow) DSYEVD with 64-bit integers from a
-   run-time loaded ILP64 LAPACK (fortran/pydbsr_ilp64.c, $PYDBSR_ILP64_LAPACK),
+   run-time loaded ILP64 LAPACK (fortran/pydbsr_ilp64.f90, $PYDBSR_ILP64_LAPACK),
    else DSYEVR (MRRR, can be slow for ill-conditioned overlap matrices), else DSYEV.
 """
 import re
@@ -108,16 +108,8 @@ DSYEVR_SUB = """
 !     otherwise   DSYEVR (MRRR; can be slow for ill-conditioned problems),
 !     and DSYEV if memory for the extra arrays is missing.
 !----------------------------------------------------------------------
-      Use, intrinsic :: iso_c_binding, only: c_int, c_double
+      Use pydbsr_ilp64, only: pydbsr_dsyevd64
       Implicit none
-      Interface
-       Integer(c_int) Function pydbsr_dsyevd64(jobz,uplo,n,a,w) bind(C,name='pydbsr_dsyevd64')
-        Import :: c_int, c_double
-        Integer(c_int), value :: jobz, uplo
-        Integer(c_int), value :: n
-        Real(c_double) :: a(*), w(*)
-       End Function pydbsr_dsyevd64
-      End Interface
       Character(1), intent(in) :: job, uplo
       Integer, intent(in) :: n
       Integer, intent(out) :: info
@@ -146,7 +138,7 @@ DSYEVR_SUB = """
         Return
        end if
       else
-       info = pydbsr_dsyevd64(ichar('V'),ichar(uplo),n,A,eval)
+       info = pydbsr_dsyevd64('V',uplo,n,A,eval)
        if(info.eq.0) then
         write(*,*) 'PYDBSR_DSYEVR: DSYEVD (ILP64) used, n =',n
         Return
