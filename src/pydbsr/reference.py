@@ -3,8 +3,9 @@
 ``read_xlsx`` reads the supplementary spreadsheet of Wang et al (2019)
 (Plasma Sources Sci. Technol., DBSR e + Xe+, 67-state model): a sheet
 "NIST Level Table" (No., configuration, term, J, energy in eV) and sheets
-with columns ``i->j`` (NIST level numbers) of (incident energy in eV,
-cross section in 1e-16 cm^2).  Requires ``openpyxl``.
+with column pairs (incident energy in eV, cross section in 1e-16 cm^2); the
+label ``i->j`` (NIST level numbers) stands above the cross-section column.
+Requires ``openpyxl``.
 """
 from __future__ import annotations
 
@@ -57,16 +58,28 @@ def read_xlsx(path) -> ReferenceData:
                 levels.append(Level(conf, term, _two_j(j), e * EV_CM, _parity(conf, term), int(r[0])))
             continue
         head = rows[0]
+        sub = rows[1] if len(rows) > 1 else ()
         for c, h in enumerate(head):
             m = re.match(r"\s*(\d+)\s*->\s*(\d+)", str(h)) if h is not None else None
             if not m:
                 continue
+            # the label 'i->j' stands above the sigma column, the energy is to its left;
+            # the second header row names the columns ('Energy(eV)', 'Sigma(1E-16 cm^2)')
+            kind = str(sub[c]).lower() if c < len(sub) and sub[c] is not None else ""
+            if kind.startswith("sigma") and c >= 1:
+                ce, cs = c - 1, c
+            elif kind.startswith("energy"):
+                ce, cs = c, c + 1
+            else:
+                raise ValueError(f"{ws.title}: cannot find the energy/sigma columns of {h!r}")
             e, s = [], []
             for r in rows[2:]:
-                if c + 1 < len(r) and r[c] is not None and r[c + 1] is not None:
-                    e.append(float(r[c]))
-                    s.append(float(r[c + 1]))
+                if cs < len(r) and r[ce] is not None and r[cs] is not None:
+                    e.append(float(r[ce]))
+                    s.append(float(r[cs]))
+            e, s = np.array(e), np.array(s) * 1e-16
+            order = np.argsort(e, kind="stable")
             key = (int(m.group(1)), int(m.group(2)))
-            ref.sigma[key] = (np.array(e), np.array(s) * 1e-16)
+            ref.sigma[key] = (e[order], s[order])
             ref.sheet[key] = ws.title
     return ref

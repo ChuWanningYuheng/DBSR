@@ -7,7 +7,7 @@ R-matrix radius a = 50 a0, thresholds adjusted to NIST, J <= 50.
 Stages (the run can be interrupted and restarted: finished partial waves are kept):
   python xe_plus_vs_wang2019.py --xlsx CrossSectionsIon.xlsx --jmax 10  --cores 64 --mem 200
   python xe_plus_vs_wang2019.py --xlsx CrossSectionsIon.xlsx --jmax 25  ...   (adds J = 11..25)
-Output: <workdir>/compare/*.png, rates.txt, omega.npz
+Output: <workdir>/compare/*.png, rates.txt, omega_J<jmax>_E<emax>_dE<de>.npz
 """
 import argparse
 from pathlib import Path
@@ -71,23 +71,32 @@ for d in sc.wave_sizes()[:4] + sc.wave_sizes()[-2:]:
 sc.run_streamed(cores=args.cores, mem_gb=args.mem, hd_threads=args.hd_threads)
 
 # ---------------------------------------------------------------- outer region
-out = sc.outer(r_match=None)
-energies = np.arange(0.01, args.emax, args.de)
-cs = out.collision_strengths(energies, jobs=args.cores, per_partial_wave=True)
 cdir = wd / "compare"
 cdir.mkdir(exist_ok=True)
-cs.save(cdir / "omega.npz")
+energies = np.arange(0.01, args.emax, args.de)
+ofile = cdir / f"omega_J{args.jmax:g}_E{args.emax:g}_dE{args.de:g}.npz"
+if ofile.exists():                                 # re-plotting / new EEDF: no need to recompute
+    cs = db.CollisionStrengths.load(ofile)
+    print(f"collision strengths from {ofile}")
+else:
+    out = sc.outer(r_match=None)
+    cs = out.collision_strengths(energies, jobs=args.cores, per_partial_wave=True)
+    cs.save(ofile)
 
 nist_of = {s.name: s.nist_no for s in states}
 name_of = {v: k for k, v in nist_of.items()}
 
 # ---------------------------------------------------------------- rates: ours vs paper
-lines = [f"# jmax = {args.jmax}; rate coefficients (cm^3/s); ratio = pydbsr / Wang2019",
+lines = [f"# jmax = {args.jmax}; rate coefficients (cm^3/s) from E <= {args.emax} eV; ratio = pydbsr / Wang2019",
          "# i  j  sheet        Te(eV)  Maxwell_ours  Maxwell_ref  ratio   Bugrova_ours  Bugrova_ref  ratio"]
 for (i, j) in ref.transitions():
     if i not in name_of or j not in name_of:
         continue
     e_ref, s_ref = ref.sigma[(i, j)]
+    m = e_ref <= energies.max()                    # same energy range as ours
+    e_ref, s_ref = e_ref[m], s_ref[m]
+    if e_ref.size < 2:
+        continue
     for te in (2.0, 5.0, 10.0, 20.0):
         r = []
         for f in (maxwell(te), bugrova(te)):
@@ -127,5 +136,5 @@ try:
         fig.savefig(cdir / f"{sheet.replace('->', '_to_')}.png", dpi=130)
         plt.close(fig)
 except ImportError:
-    pass
+    print("matplotlib not installed: no plots (pip install matplotlib)")
 print(f"results in {cdir}")
