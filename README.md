@@ -20,6 +20,11 @@ Ion ─► Target (dbsr_hf → jj‑состояния) ─► [NIST‑поро�
   K‑матрицы, силы столкновений Ω, сечения σ, эффективные силы Υ(T) и константы скоростей;
 * любую программу можно вызвать напрямую: `pydbsr.run("dbsr_mult3", [...], cwd)`.
 
+📖 **Подробная документация — [docs/](docs/README.md)**: установка, быстрый старт
+(в т.ч. из Jupyter — [examples/xe_plus_wang2019.ipynb](examples/xe_plus_wang2019.ipynb)),
+мишень, рассеяние, внешняя область, [физический чек-лист](docs/physics.md),
+[проверки](docs/validation.md), [ошибки](docs/troubleshooting.md), [API](docs/api.md).
+
 ## Установка
 
 Нужны компилятор Fortran (gfortran ≥ 9 или ifort/ifx), CMake ≥ 3.18, BLAS/LAPACK, git.
