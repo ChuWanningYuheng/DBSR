@@ -27,3 +27,18 @@ def test_superseded_reference(tmp_path):
     tg.add(["5s2 5p5", "5s2 5p4 6p"])
     assert tg.superseded() == {tg.specs[0].name}
     assert tg.specs[2].varied == "6p-,6p"
+
+
+def test_cfg_orbitals_high_l(tmp_path):
+    """DBSR labels l >= 21 with chr(l + 102); mk must see every continuum l."""
+    from pydbsr.scattering import Scattering
+    s = State("a", "5s2 5p5", "", 3, -1, 0.0)
+    sc = Scattering([s], tmp_path, ion=Ion("Xe", 1), jmax=0, progress=None)
+    peel = [" 5s 1", " 5p-1", "10d 1", " kl-3", " kp 2", " k" + chr(30 + 102) + "-1", " k" + chr(54 + 102) + " 2"]
+    text = ("Core subshells:  -7446.4\n  1s   2s   2p-  2p   4d-  4d \nPeel subshells:\n" + "".join(peel) +
+            "\nCSF(s):\n")
+    (tmp_path / "cfg.001").write_bytes(text.encode("latin-1"))
+    orbs = sc._cfg_orbitals(1)
+    assert sorted(l for c, l in orbs if c) == [1, 8, 30, 54]
+    assert max(l for c, l in orbs if not c) == 2
+    assert sc.multipole_max(1) == 56

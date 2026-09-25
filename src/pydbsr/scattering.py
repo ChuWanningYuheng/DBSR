@@ -207,7 +207,13 @@ class Scattering:
                                  threads=self.threads, echo=self.echo, progress=self._log, wave_args=wave_args)
 
     # ----------------------------------------------------------- completeness
-    _ORB = re.compile(r"\s*(\d+|k)([spdfghik])(-?)")
+    _ORB = re.compile(r"^\s*(\d+|k)(.)(-?)", re.S)
+    _LSYM = "spdfghiklmnoqrtuvwxyz"        # DBSR (ZCOM AL/LA); l >= 21: chr(l + 102)
+
+    @classmethod
+    def _l_of(cls, ch: str) -> int:
+        i = cls._LSYM.find(ch)
+        return i if i >= 0 else ord(ch) - 102
 
     def _cfg_orbitals(self, klsp: int) -> list[tuple[bool, int]]:
         """[(is_continuum, l)] of all core, bound and continuum orbitals in cfg.nnn."""
@@ -222,11 +228,13 @@ class Scattering:
                 continue
             if line.startswith("CSF"):
                 break
+            if part == "core" and not line.strip()[:1].isdigit():
+                continue                       # energy etc.
             if part:
                 for i in range(0, len(line), 5):
                     m = self._ORB.match(line[i:i + 5])
-                    if m:
-                        out.append((m.group(1) == "k", "spdfghik".index(m.group(2))))
+                    if m and m.group(2).strip():
+                        out.append((m.group(1) == "k", self._l_of(m.group(2))))
         return out
 
     def multipole_max(self, klsp: int) -> int:
