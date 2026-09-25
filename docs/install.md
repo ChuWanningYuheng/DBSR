@@ -86,6 +86,20 @@ pip install --no-build-isolation -v "git+https://github.com/ChuWanningYuheng/DBS
 | `DBSR_DEBUG_CHECKS` | OFF | `-fcheck=all -g` (медленно, для отладки) |
 | `DBSR_UPSTREAM_DIR` | — | взять исходники DBSR из локальной папки вместо GitHub |
 
+## 3a. Сервер без доступа к GitHub
+
+Соберите архив со всеми исходниками там, где GitHub доступен:
+```bash
+bash tools/make_offline_bundle.sh pydbsr_offline.tar.gz      # pydbsr + DBSR3/LIBRARIES/UTILS
+```
+Перенесите его на сервер (scp, флешка) и соберите без интернета (conda-окружение
+как в п. 3):
+```bash
+tar xzf pydbsr_offline.tar.gz
+cd pydbsr_src && pip install --no-build-isolation --no-deps -v .
+```
+Исходники DBSR берутся из `pydbsr_src/upstream/`; примеры и ноутбук — в `pydbsr_src/examples/`.
+
 ## 4. Проверка установки
 
 ```bash
