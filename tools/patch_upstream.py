@@ -29,11 +29,11 @@ Patches
    names longer than ~32 characters ("Fortran runtime error: End of record");
    DBSR_MCHF/get_case: the command ``dbsr_breit3 name.c`` (Character(200)).
 7. DBSR_HD3: the full diagonalisation used LAP_DSYEV = DSYEV with the minimal
-   workspace (unblocked tridiagonalisation, QR iteration: ~20x slower than
-   MRRR and poorly threaded).  It now uses DSYEVR (MRRR, workspace O(n) - no
-   32-bit overflow for n > 32768, unlike DSYEVD) with an optimal workspace,
-   and falls back to DSYEV if the extra n x n eigenvector array cannot be
-   allocated.
+   workspace (unblocked tridiagonalisation + QR: 6x more CPU than DSYEVD on
+   the Xe+ J=0 matrices, poorly threaded).  Now DSYEVD for n <= 32000; for
+   larger n (32-bit workspace overflow) DSYEVD with 64-bit integers from a
+   run-time loaded ILP64 LAPACK (fortran/pydbsr_ilp64.c, $PYDBSR_ILP64_LAPACK),
+   else DSYEVR (MRRR, can be slow for ill-conditioned overlap matrices), else DSYEV.
 """
 import re
 import sys
@@ -100,12 +100,24 @@ DSYEVR_SUB = """
 !======================================================================
       Subroutine PYDBSR_DSYEVR(job,uplo,n,A,eval,info)
 !======================================================================
-!     all eigenvalues/eigenvectors of the symmetric A(n,n) (added by pydbsr):
-!     DSYEVR (MRRR) with optimal workspace; eigenvectors returned in A.
-!     Falls back to DSYEV if the n x n array for the eigenvectors cannot
-!     be allocated.
+!     all eigenvalues/eigenvectors of the symmetric A(n,n) (added by pydbsr),
+!     eigenvectors returned in A:
+!     n <= 32000: DSYEVD (divide and conquer, optimal workspace);
+!     n >  32000: DSYEVD with 64-bit integers from the ILP64 LAPACK given by
+!                 $PYDBSR_ILP64_LAPACK (the 32-bit workspace size overflows);
+!     otherwise   DSYEVR (MRRR; can be slow for ill-conditioned problems),
+!     and DSYEV if memory for the extra arrays is missing.
 !----------------------------------------------------------------------
+      Use, intrinsic :: iso_c_binding, only: c_int, c_double
       Implicit none
+      Interface
+       Integer(c_int) Function pydbsr_dsyevd64(jobz,uplo,n,a,w) bind(C,name='pydbsr_dsyevd64')
+        Import :: c_int, c_double
+        Integer(c_int), value :: jobz, uplo
+        Integer(c_int), value :: n
+        Real(c_double) :: a(*), w(*)
+       End Function pydbsr_dsyevd64
+      End Interface
       Character(1), intent(in) :: job, uplo
       Integer, intent(in) :: n
       Integer, intent(out) :: info
@@ -113,12 +125,34 @@ DSYEVR_SUB = """
       Real(8), allocatable :: Z(:,:), work(:)
       Integer, allocatable :: isuppz(:), iwork(:)
       Real(8) :: wq(1), vl, vu
-      Integer :: iwq(1), m, lwork, liwork, ierr
+      Integer :: iwq(1), m, lwork, liwork, ierr, nmin
+      Character(32) :: env
       vl = 0.d0; vu = 0.d0
+      nmin = 32000                             ! $PYDBSR_DSYEVD64_MIN: testing the ILP64 path
+      Call get_environment_variable('PYDBSR_DSYEVD64_MIN', env, status=ierr)
+      if(ierr.eq.0) read(env,*,iostat=ierr) nmin
       if(job.ne.'V'.and.job.ne.'v') then
        Allocate(work(3*n)); lwork = 3*n
        Call DSYEV(job,uplo,n,A,n,eval,work,lwork,info)
        Return
+      end if
+      if(n.le.min(nmin,32000)) then
+       Call DSYEVD('V',uplo,n,A,n,eval,wq,-1,iwq,-1,info)
+       lwork = int(wq(1)); liwork = iwq(1)
+       Allocate(work(lwork), iwork(liwork), stat=ierr)
+       if(ierr.eq.0) then
+        Call DSYEVD('V',uplo,n,A,n,eval,work,lwork,iwork,liwork,info)
+        Deallocate(work, iwork)
+        Return
+       end if
+      else
+       info = pydbsr_dsyevd64(ichar('V'),ichar(uplo),n,A,eval)
+       if(info.eq.0) then
+        write(*,*) 'PYDBSR_DSYEVR: DSYEVD (ILP64) used, n =',n
+        Return
+       end if
+       if(info.gt.-9998) Return                 ! LAPACK error from DSYEVD
+       write(*,*) 'PYDBSR_DSYEVR: no ILP64 LAPACK ($PYDBSR_ILP64_LAPACK), DSYEVR used'
       end if
       Allocate(Z(n,n), isuppz(2*n), stat=ierr)
       if(ierr.ne.0) then

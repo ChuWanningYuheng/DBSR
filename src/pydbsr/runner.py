@@ -47,6 +47,26 @@ def which(program: str) -> str:
         "Install pydbsr with its compiled programs or set DBSR_BIN.")
 
 
+def ilp64_lapack() -> str | None:
+    """An LAPACK library with 64-bit integers (for DSYEVD on matrices with
+    n > 32000 in dbsr_hd3): $PYDBSR_ILP64_LAPACK, the scipy-openblas64 wheel,
+    or conda's libopenblas64_."""
+    if os.environ.get("PYDBSR_ILP64_LAPACK"):
+        return os.environ["PYDBSR_ILP64_LAPACK"]
+    cands = []
+    try:
+        import scipy_openblas64
+        cands += sorted(Path(scipy_openblas64.get_lib_dir()).glob("libscipy_openblas64_*"))
+    except Exception:
+        pass
+    prefix = Path(sys.prefix)
+    cands += sorted((prefix / "lib").glob("libopenblas64_*.so*"))
+    for c in cands:
+        if c.is_file():
+            return str(c)
+    return None
+
+
 def available_programs() -> list[str]:
     d = bin_dir()
     return sorted(p.name for p in d.iterdir() if os.access(p, os.X_OK)) if d else []
@@ -95,6 +115,10 @@ def run(program: str, args: Sequence[str] = (), cwd: str | Path = ".", *,
     if threads is not None:
         for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
             e[k] = str(threads)
+    if "PYDBSR_ILP64_LAPACK" not in e:
+        lib = ilp64_lapack()
+        if lib:
+            e["PYDBSR_ILP64_LAPACK"] = lib
     t0 = time.time()
     lines = []
     timed_out = threading.Event()

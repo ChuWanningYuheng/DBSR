@@ -334,13 +334,14 @@ class Scattering:
             n, nc = nch.get(k, (0, 0))
             khm = n * max(ns - 6, 1) + nc
             full = khm * khm * 8 / 1e9                     # one dense matrix, GB
+            # dbsr_hd3: H, S, eigenvectors + DSYEVD workspace (2 n^2) -> ~4.6 dense matrices
             try:
                 mk = int(self._mat_args(k)[0].split("=")[1]) if self._mat_args(k) else int(self.params["mk"])
             except (FileNotFoundError, IndexError, KeyError, ValueError):
                 mk = 7
             rk_gb = 4 * ns * ns * ks * ks * (mk + 1) * 8 / 1e9   # dbsr_mat3 Rk integrals
             out.append(dict(klsp=k, two_j=self.partial_waves[k - 1][0], parity=self.partial_waves[k - 1][1],
-                            nch=n, khm=khm, mk=mk, mat_gb=1.0 + rk_gb + 0.3 * full, hd_gb=1.0 + 2.6 * full,
+                            nch=n, khm=khm, mk=mk, mat_gb=1.0 + rk_gb + 0.3 * full, hd_gb=1.0 + 4.6 * full,
                             disk_gb=0.5 * full))
         return out
 

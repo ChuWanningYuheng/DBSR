@@ -33,6 +33,9 @@ def main(argv=None):
         print(f"executables: {bin_dir() or '$PATH'}")
         print("programs:", " ".join(available_programs()))
         print(f"Coulomb functions: {backend()}")
+        from .runner import ilp64_lapack
+        lib = ilp64_lapack()
+        print(f"ILP64 LAPACK (dbsr_hd3, matrices > 32000): {lib or 'not found - pip install scipy-openblas64'}")
     elif a.cmd == "bin":
         print(bin_dir() or "")
     elif a.cmd == "run":

@@ -24,6 +24,8 @@ dependencies = ["numpy>=1.21", "scipy>=1.7", "mpmath>=1.2"]
 test = ["pytest>=7"]
 plot = ["matplotlib"]
 nist = ["ASDCache>=0.2", "openpyxl"]
+# LAPACK with 64-bit integers: fast DSYEVD in dbsr_hd3 for matrices > 32000
+fast = ["scipy-openblas64"]
 
 [project.scripts]
 pydbsr = "pydbsr.cli:main"

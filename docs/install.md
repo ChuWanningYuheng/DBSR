@@ -100,6 +100,14 @@ cd pydbsr_src && pip install --no-build-isolation --no-deps -v .
 ```
 Исходники DBSR берутся из `pydbsr_src/upstream/`; примеры и ноутбук — в `pydbsr_src/examples/`.
 
+### Быстрая диагонализация больших матриц
+
+```bash
+pip install scipy-openblas64        # или из офлайн-архива: pip install --no-deps wheels/scipy_openblas64-*.whl
+pydbsr info                         # строка "ILP64 LAPACK ...": путь к библиотеке
+```
+Нужно для волн с матрицами > 32 000 (у Xe⁺ с 67 состояниями — все J ≥ 2).
+
 ## 4. Проверка установки
 
 ```bash
@@ -125,4 +133,5 @@ cd /data/pydbsr_calc/DBSR_src && python -m pytest -q    # тесты (из кл�
 | `DBSR_BIN` | папка с программами DBSR (если хотите использовать свою сборку) |
 | `PYDBSR_COULOMB_LIB` | путь к `libpydbsr_coulomb.so` |
 | `PYDBSR_CACHE` | кэш таблиц NIST (по умолчанию `~/.cache/pydbsr`) |
+| `PYDBSR_ILP64_LAPACK` | LAPACK с 64-битными целыми для dbsr_hd3 (по умолчанию ищется `scipy-openblas64`) |
 | `OMP_NUM_THREADS` | не выставляйте вручную для расчётов: pydbsr задаёт потоки каждой программе сам |
