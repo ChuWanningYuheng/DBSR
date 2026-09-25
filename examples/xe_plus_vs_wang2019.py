@@ -24,6 +24,8 @@ p.add_argument("--workdir", default="xe_plus_wang2019")
 p.add_argument("--jmax", type=float, default=10.0, help="max total J of e + Xe+ (paper: 50)")
 p.add_argument("--cores", type=int, default=32, help="CPU cores to use")
 p.add_argument("--mem", type=float, default=150.0, help="memory budget, GB")
+p.add_argument("--scratch", default=None, help="fast directory for temporary files (e.g. ~/pydbsr_tmp); results go to --workdir")
+p.add_argument("--scratch-gb", type=float, default=None, help="space for temporary files in --scratch, GB")
 p.add_argument("--hd-threads", type=int, default=16, help="threads of one dbsr_hd3 (LAPACK)")
 p.add_argument("--emax", type=float, default=60.0, help="max electron energy, eV")
 p.add_argument("--de", type=float, default=0.0136, help="energy step, eV (paper: 0.0136 = 0.001 Ry)")
@@ -68,7 +70,8 @@ if not (sdir / "cfg.001").exists() or len(list(sdir.glob("cfg.[0-9][0-9][0-9]"))
     sc.run_conf()
 for d in sc.wave_sizes()[:4] + sc.wave_sizes()[-2:]:
     print(d)
-sc.run_streamed(cores=args.cores, mem_gb=args.mem, hd_threads=args.hd_threads)
+sc.run_streamed(cores=args.cores, mem_gb=args.mem, hd_threads=args.hd_threads,
+                scratch=args.scratch, scratch_gb=args.scratch_gb)
 
 # ---------------------------------------------------------------- outer region
 cdir = wd / "compare"

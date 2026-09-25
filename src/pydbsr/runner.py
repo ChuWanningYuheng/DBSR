@@ -164,15 +164,15 @@ def error_message(output: str) -> str | None:
 _COPY_LIMIT = 4 << 20      # files below 4 MB are copied into sandboxes, larger ones linked
 
 
-def _sandbox(workdir: Path, tag: str) -> tuple[Path, set]:
-    """Private directory for one job.
+def _sandbox(workdir: Path, tag: str, base: Path | None = None) -> tuple[Path, set]:
+    """Private directory for one job (in ``base``, default ``workdir/_parallel``).
 
     Small files are copied (programs rewrite some inputs in place, e.g. every
     program using the DBS library rewrites ``knot.dat``); large ones
     (bsw, int_bnk, matrices) are symlinked.  Returns the directory and the
     names of the copied inputs (not moved back afterwards).
     """
-    sb = workdir / "_parallel" / tag
+    sb = (workdir / "_parallel" if base is None else Path(base)) / tag
     if sb.exists():
         shutil.rmtree(sb)
     sb.mkdir(parents=True)

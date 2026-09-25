@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -336,7 +337,8 @@ class Scattering:
         return out
 
     def run_streamed(self, cores: int, mem_gb: float, hd_threads: int = 8, cleanup: bool = True,
-                     skip_done: bool = True, itype: int = 0, hd_args: dict | None = None):
+                     skip_done: bool = True, itype: int = 0, hd_args: dict | None = None,
+                     scratch: str | Path | None = None, scratch_gb: float | None = None):
         """dbsr_breit3 -> dbsr_mat3 -> dbsr_hd3 for each partial wave as soon as possible,
         within a budget of ``cores`` CPU cores and ``mem_gb`` GB of memory.
 
@@ -347,6 +349,13 @@ class Scattering:
           disk holds only a few partial waves at a time;
         * with ``skip_done`` partial waves that already have ``h.nnn`` are
           skipped: an interrupted run is continued by calling this again.
+
+        * with ``scratch`` (a fast local directory, e.g. in the home directory)
+          the programs of a partial wave run there if its temporary files
+          (matrix ``dbsr_mat.nnn`` etc., estimated) fit into the free part of
+          ``scratch_gb``; the results (``h.nnn``, logs) are moved to the work
+          directory right away and the temporary files deleted.  Larger waves
+          run in the work directory.
 
         ``prepare()``, ``run_prep()`` and ``run_conf()`` must have been run.
         """
@@ -366,6 +375,13 @@ class Scattering:
         self._log(f"streamed run: {len(todo)} of {len(sizes)} partial waves, {cores} cores, {mem_gb:.0f} GB; "
                   f"largest matrix {sizes[0]['khm']} (~{sizes[0]['hd_gb']:.1f} GB in dbsr_hd3)")
         lock = threading.Lock()
+        if scratch is not None:
+            scratch = Path(scratch).expanduser().resolve() / f"pydbsr_{wd.name}_{os.getpid()}"
+            scratch.mkdir(parents=True, exist_ok=True)
+            if scratch_gb is None:
+                scratch_gb = 0.8 * shutil.disk_usage(scratch).free / 1e9
+            self._log(f"scratch: {scratch} ({scratch_gb:.1f} GB for temporary files)")
+        scratch_free = [scratch_gb or 0.0]
 
         def step(sb, prog, args, ncores, mem, k):
             c, m = pool.acquire(ncores, mem)
@@ -378,7 +394,13 @@ class Scattering:
         def job(d):
             k = d["klsp"]
             t0 = time.time()
-            sb, copied = _sandbox(wd, f"wave_{k:03d}")
+            need = 1.3 * d["disk_gb"] + 0.2
+            base = None
+            with lock:
+                if scratch is not None and need <= scratch_free[0]:
+                    scratch_free[0] -= need
+                    base = scratch
+            sb, copied = _sandbox(wd, f"wave_{k:03d}", base)
             try:
                 step(sb, "dbsr_breit3", [], 1, 1.0, k)
                 step(sb, "dbsr_mat3", self._mat_args(k), 1, d["mat_gb"], k)
@@ -391,6 +413,8 @@ class Scattering:
             finally:
                 with lock:
                     _collect(sb, wd, f"{k:03d}", copied)
+                    if base is not None:
+                        scratch_free[0] += need
             if cleanup:
                 for f in (f"dbsr_mat.{k:03d}", f"int_bnk.{k:03d}"):
                     if (wd / f).exists():
@@ -411,10 +435,11 @@ class Scattering:
                     self._log(f"  {tag}: FAILED: {e}")
                     continue
                 self._log(f"  {tag}: done in {t / 60:.1f} min")
-        try:
-            (wd / "_parallel").rmdir()
-        except OSError:
-            pass
+        for d in ([wd / "_parallel"] + ([scratch] if scratch is not None else [])):
+            try:
+                d.rmdir()
+            except OSError:
+                pass
         errs = self.target_errors()
         if errs["h"][0] > 1e-3:
             v, i, j = errs["h"]
