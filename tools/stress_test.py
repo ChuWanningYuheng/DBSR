@@ -509,6 +509,11 @@ def test_library(tmp: Path, repo: Path):
             os.environ.pop("DBSR_BIN", None)
         else:
             os.environ["DBSR_BIN"] = old
+    try:
+        import pytest  # noqa: F401
+    except ImportError:
+        print("    unit tests skipped: pytest is not installed (conda install pytest)")
+        return
     r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-W", "error", "-m", "not slow", str(repo / "tests")],
                        capture_output=True, text=True, cwd=repo)
     last = (r.stdout.strip().splitlines() or ["?"])[-1]
