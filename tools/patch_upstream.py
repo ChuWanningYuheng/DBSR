@@ -28,6 +28,12 @@ Patches
    ``cat name.int_new >> name.int_res`` (Character(80)) overflowed for case
    names longer than ~32 characters ("Fortran runtime error: End of record");
    DBSR_MCHF/get_case: the command ``dbsr_breit3 name.c`` (Character(200)).
+7. DBSR_HD3: the full diagonalisation used LAP_DSYEV = DSYEV with the minimal
+   workspace (unblocked tridiagonalisation, QR iteration: ~20x slower than
+   MRRR and poorly threaded).  It now uses DSYEVR (MRRR, workspace O(n) - no
+   32-bit overflow for n > 32768, unlike DSYEVD) with an optimal workspace,
+   and falls back to DSYEV if the extra n x n eigenvector array cannot be
+   allocated.
 """
 import re
 import sys
@@ -90,6 +96,48 @@ def replace(path, old, new, count=None):
     _write(path, text.replace(old, new))
 
 
+DSYEVR_SUB = """
+!======================================================================
+      Subroutine PYDBSR_DSYEVR(job,uplo,n,A,eval,info)
+!======================================================================
+!     all eigenvalues/eigenvectors of the symmetric A(n,n) (added by pydbsr):
+!     DSYEVR (MRRR) with optimal workspace; eigenvectors returned in A.
+!     Falls back to DSYEV if the n x n array for the eigenvectors cannot
+!     be allocated.
+!----------------------------------------------------------------------
+      Implicit none
+      Character(1), intent(in) :: job, uplo
+      Integer, intent(in) :: n
+      Integer, intent(out) :: info
+      Real(8) :: A(n,n), eval(n)
+      Real(8), allocatable :: Z(:,:), work(:)
+      Integer, allocatable :: isuppz(:), iwork(:)
+      Real(8) :: wq(1), vl, vu
+      Integer :: iwq(1), m, lwork, liwork, ierr
+      vl = 0.d0; vu = 0.d0
+      if(job.ne.'V'.and.job.ne.'v') then
+       Allocate(work(3*n)); lwork = 3*n
+       Call DSYEV(job,uplo,n,A,n,eval,work,lwork,info)
+       Return
+      end if
+      Allocate(Z(n,n), isuppz(2*n), stat=ierr)
+      if(ierr.ne.0) then
+       write(*,*) 'PYDBSR_DSYEVR: no memory for eigenvectors, using DSYEV'
+       Allocate(work(3*n)); lwork = 3*n
+       Call DSYEV(job,uplo,n,A,n,eval,work,lwork,info)
+       Return
+      end if
+      Call DSYEVR('V','A',uplo,n,A,n,vl,vu,1,n,0.d0,m,eval,Z,n,isuppz,wq,-1,iwq,-1,info)
+      lwork = int(wq(1)); liwork = iwq(1)
+      Allocate(work(lwork), iwork(liwork))
+      Call DSYEVR('V','A',uplo,n,A,n,vl,vu,1,n,0.d0,m,eval,Z,n,isuppz,work,lwork,iwork,liwork,info)
+      if(info.eq.0.and.m.ne.n) info = -100
+      if(info.eq.0) A = Z
+      Deallocate(Z, isuppz, work, iwork)
+      End Subroutine PYDBSR_DSYEVR
+"""
+
+
 def main(root):
     root = Path(root)
     lib = root / "LIBRARIES"
@@ -143,6 +191,13 @@ def main(root):
             f"Character({LONG}) :: cline", 1)
     replace(prog / "DBSR_MCHF/get_case.f90", "Character(200) :: A_core, A_conf, AC",
             f"Character({LONG}) :: A_core, A_conf, AC", 1)
+
+    # 7. dbsr_hd3: DSYEV -> DSYEVR
+    replace(prog / "DBSR_HD3/diag_mat.f90", "      Call LAP_DSYEV(job,uplo,khm,khm,A,eval,INFO)",
+            "      Call PYDBSR_DSYEVR(job,uplo,khm,A,eval,INFO)", 1)
+    t = _read(prog / "DBSR_HD3/diag_mat.f90")
+    nl = "\r\n" if "\r\n" in t else "\n"
+    _write(prog / "DBSR_HD3/diag_mat.f90", t + nl.join(DSYEVR_SUB.splitlines()) + nl)
 
     # 3. file-name length in program modules
     n = 0
