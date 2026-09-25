@@ -33,15 +33,22 @@ source "$ROOT/miniforge3/etc/profile.d/conda.sh"
 if [ ! -d "$ROOT/env" ]; then
   conda create -y -p "$ROOT/env" -c conda-forge python=3.11 \
       fortran-compiler c-compiler cmake ninja git "libblas=*=*openblas" liblapack openblas \
-      numpy scipy mpmath matplotlib openpyxl pytest ipykernel scikit-build-core
+      numpy scipy mpmath matplotlib openpyxl pytest ipykernel jupyterlab scikit-build-core
 fi
 conda activate "$ROOT/env"
+python -c "import jupyterlab, matplotlib, openpyxl" 2>/dev/null \
+  || conda install -y -c conda-forge jupyterlab matplotlib openpyxl       # older environments
 export CMAKE_PREFIX_PATH="$CONDA_PREFIX${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 
-# ---------------------------------------------------------------- pydbsr
-CMAKE_BUILD_PARALLEL_LEVEL=16 pip install --no-build-isolation -v "git+$REPO" > "$ROOT/install.log" 2>&1 \
+# ---------------------------------------------------------------- pydbsr (re-running this script updates it)
+CMAKE_BUILD_PARALLEL_LEVEL=16 pip install --no-build-isolation --force-reinstall --no-deps -v "git+$REPO" \
+    > "$ROOT/install.log" 2>&1 \
   || { echo "!! build failed, see $ROOT/install.log (last lines below)"; tail -40 "$ROOT/install.log"; exit 1; }
 pydbsr info
+
+# sources: examples, notebook, stress test
+if [ -d "$ROOT/DBSR_src/.git" ]; then git -C "$ROOT/DBSR_src" pull -q; else git clone -q "$REPO" "$ROOT/DBSR_src"; fi
+cp -n "$ROOT/DBSR_src/examples/xe_plus_wang2019.ipynb" "$ROOT/runs/" 2>/dev/null || true
 
 # Jupyter kernel (so that the existing notebook can use this environment)
 python -m ipykernel install --user --name pydbsr --display-name "Python (pydbsr)" || true
@@ -59,4 +66,4 @@ EOF
 echo
 echo "== done.  Use:   source $ROOT/env.sh"
 echo "   runs go to    $ROOT/runs"
-echo "   in Jupyter choose the kernel 'Python (pydbsr)'"
+echo "   notebook      $ROOT/runs/xe_plus_wang2019.ipynb  (kernel 'Python (pydbsr)')"
