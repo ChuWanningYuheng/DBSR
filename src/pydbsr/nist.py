@@ -271,11 +271,12 @@ def assign(states, levels: Sequence[Level] | str | Ion, overwrite: bool = True,
 
     * ``method="energy"``: matched in energy order;
     * ``method="config"``: optimal one-to-one matching (Hungarian algorithm) with
-      the cost |E_calc - E_NIST - shift| + ``penalty_ev`` if the dominant
+      the cost (E_calc - E_NIST - shift)^2 + ``penalty_ev``^2 if the dominant
       configuration of the state differs from the NIST configuration; ``shift``
-      is the median calc - NIST difference of the energy-order matching.  Use
-      it when close levels of different configurations come out in the wrong
-      order (Xe II: (3P2)6s and (3P2)5d J = 3/2).
+      is the median calc - NIST difference of the energy-order matching.  The
+      quadratic (convex) cost keeps the energy order among levels of the same
+      configuration (Ba I 6s5d 3D2 / 1D2) and lets close levels of different
+      configurations change places (Xe II: (3P2)6s and (3P2)5d J = 3/2).
 
     Sets ``state.exp_energy_cm``, ``state.nist_label`` and ``state.nist_no``.
     Returns a list of (state, level or None).
@@ -326,7 +327,7 @@ def assign(states, levels: Sequence[Level] | str | Ion, overwrite: bool = True,
             for a, s in enumerate(sts):
                 so = oshell({(n, l): q for n, l, q in io.parse_config(s.config)})
                 for b, lv in enumerate(lvs):
-                    cost[a, b] = abs(exc[id(s)] - lv.energy_cm - shift) + (pen if oshell(lv.shells()) != so else 0.0)
+                    cost[a, b] = (exc[id(s)] - lv.energy_cm - shift) ** 2 + (pen ** 2 if oshell(lv.shells()) != so else 0.0)
             ra, cb = linear_sum_assignment(cost)
             got = dict(zip(ra, cb))
             pairs[key] = [(s, lvs[got[a]] if a in got else None) for a, s in enumerate(sts)]

@@ -47,6 +47,18 @@ def test_assign_config_method():
     assert (st[1].nist_no, st[2].nist_no) == (8, 5)
 
 
+def test_assign_config_keeps_order_within_configuration():
+    """Ba I 6s5d 3D2 / 1D2: same configuration and J, energy order must be kept."""
+    from pydbsr.constants import AU_CM
+    lv = [nist.Level("6s2", "1S", 0, 0.0, 1, 1), nist.Level("6s.5d", "3D", 4, 9215.501, 1, 3),
+          nist.Level("6s.5d", "1D", 4, 11395.35, 1, 5)]
+    e = lambda cm: -1.0 + cm / AU_CM
+    st = [State("g", "6s2", "", 0, 1, -1.0), State("t", "6s 5d", "", 4, 1, e(11774.0), configs=["6s2", "6s 5d"]),
+          State("u", "6s 5d", "", 4, 1, e(13807.0), configs=["6s2", "6s 5d"])]
+    nist.assign(st, lv, verbose=False, method="config")
+    assert (st[1].nist_no, st[2].nist_no) == (3, 5)
+
+
 ASCII = """<html><body><pre>
 -----------------------------------------------------------------
  Configuration       | Term  |   J |      Level (cm-1)      |
