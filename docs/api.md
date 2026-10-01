@@ -50,7 +50,18 @@ import pydbsr as db
 `fetch_levels(spectrum)`, `read_levels(path)`, `save_levels_csv(levels, path)`, `download_levels_csv(spectrum, path)`, `assign(states, levels)`, `fetch_lines(spectrum, wmin_nm, wmax_nm, backend="auto")`, `read_lines(path)`, `upper_levels(lines, levels)`; классы `Level`, `Line`.
 
 ## `pydbsr.reference`
-`read_xlsx(path)` → `ReferenceData` (`levels`, `sigma[(i,j)] = (E_эВ, σ_см²)`, `sheet`, `transitions(sheet)`, `label(no)`).
+`read_xlsx(path)` → `ReferenceData` (`levels`, `sigma[(i,j)] = (E_эВ, σ_см²)`, `sheet`, `transitions(sheet)`, `label(no)`);
+`write_xlsx(path, levels, sigma, sheet_of=None, labels=None)` — сечения в формате таблицы Ванга;
+`write_rates_xlsx(path, Te, rates, labels=None)` — ⟨σv⟩(Te), xlsx + csv.
+
+## `pydbsr.transitions`
+`transitions(target, states, kinds=("E1",), pairs=None, jobs=1)` — S, gf, A для пар состояний мишени
+(`dbsr_mult3` + `dbsr_dmat3`, кэш); `TransitionTable(trs, states)` — A при энергиях NIST, `branching(upper)`,
+`lifetime_ns(upper)`, `to_csv(path)`; `parse_zf_res(text)`, `allowed(kind, 2J1, p1, 2J2, p2)`.
+
+## `pydbsr.rates`
+`rate_from_sigma(E, σ, Te, threshold)`, `rates_on_grid(E, σ, Te_grid, threshold)` — ⟨σv⟩ (см³/с) для
+максвелловской (или любой) ФРЭЭ; `deexcitation(k, g_i, g_j, ΔE, Te)` — детальный баланс.
 
 ## `pydbsr.io`
 Разбор конфигураций (`parse_config`, `to_dbsr_conf`, `config_parity`), файлы DBSR (`CFile`, `read_j`, `write_state`, `TargetJJ`, `write_par`, `Grid`, `read_knot`, `modify_knot`), `partial_waves(nelc, jmax)`, `radial_functions(bsw, knot)` → `RadialFunction(n, kappa, energy, r, P, Q)`.

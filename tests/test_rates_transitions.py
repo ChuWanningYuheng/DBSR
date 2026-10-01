@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from pydbsr import crm, transitions as tr
+from pydbsr import rates, transitions as tr
 
 # zf_res as written by dbsr_dmat3 (Gen_zf, gf='f'), two lines, the first with
 # the velocity form
@@ -54,37 +54,30 @@ def test_air_wavelength():
 def test_rate_from_sigma_constant():
     # constant sigma above threshold 0: <sigma v> = sigma * <v> = sigma sqrt(8 kT / pi m)
     E = np.linspace(0, 400, 2000)
-    k = crm.rate_from_sigma(E, np.full_like(E, 1e-16), Te_eV=2.0, threshold_eV=0.0, tail="1/E")
-    vbar = crm.V_EV * np.sqrt(8 * 2.0 / np.pi / 2)        # sqrt(8kT/pi m) = V_EV*sqrt(4T/pi)
+    k = rates.rate_from_sigma(E, np.full_like(E, 1e-16), Te_eV=2.0, threshold_eV=0.0, tail="1/E")
+    vbar = rates.V_EV * np.sqrt(8 * 2.0 / np.pi / 2)        # sqrt(8kT/pi m) = V_EV*sqrt(4T/pi)
     assert abs(k / (1e-16 * vbar) - 1) < 2e-3
 
 
-def test_two_level_coronal_limit_and_boltzmann():
-    d = crm.CRMData("X", ["g", "u"], [1, 3], [0.0, 8065.544], Te=[0.5, 1, 2, 5])
-    d.add_rate("g", "u", [1e-10] * 4)
-    d.add_A("u", "g", 1e8)
-    p = crm.steady_state(d, ne=1e10, Te=1.0)
-    assert np.isclose(p[1], 1e10 * 1e-10 / (1e8 + 1e10 * 1e-10 / 3 * np.exp(1.0)), rtol=1e-6)
-    d.A.clear()                                           # no radiation: Boltzmann
-    p = crm.steady_state(d, ne=1e10, Te=1.0)
-    assert np.isclose(p[1], 3 * np.exp(-1.0), rtol=1e-6)
-    s = crm.sensitivity(d, [], 1e10, 1.0)
-    assert s == {}
+def test_rates_on_grid_and_detailed_balance():
+    E = np.linspace(2.0, 200, 3000)
+    k = rates.rates_on_grid(E, np.full_like(E, 1e-16), [1.0, 2.0], threshold_eV=2.0)
+    assert k[1] > k[0] > 0
+    kd = rates.deexcitation(k, 1, 3, 2.0, np.array([1.0, 2.0]))
+    assert np.allclose(kd, k / 3 * np.exp([2.0, 1.0]))
 
 
-def test_sensitivity_and_save(tmp_path):
-    d = crm.CRMData("X", ["g", "m", "u"], [1, 5, 3], [0.0, 8000.0, 20000.0], Te=[0.5, 1, 2, 5])
-    d.add_rate("g", "m", [1e-11, 3e-10, 1e-9, 2e-9])
-    d.add_rate("g", "u", [1e-14, 1e-12, 1e-10, 1e-9])
-    d.add_rate("m", "u", [1e-9, 5e-9, 1e-8, 1e-8])
-    d.add_A("u", "g", 1e8)
-    d.add_A("u", "m", 3e7)
-    d.save(tmp_path / "x.json")
-    e = crm.CRMData.load(tmp_path / "x.json")
-    assert e.k.keys() == d.k.keys() and e.A == d.A
-    s = crm.sensitivity(e, [("u", "g")], 1e11, 1.0, tau=1e-5)
-    v = s[("u", "g")]
-    assert v["I"] > 0 and v["dlnI_dlnne"] > 1.0          # stepwise via the metastable: faster than ne
-    assert 0 < crm.escape_factor_doppler(10) < 1 and np.isclose(crm.escape_factor_doppler(0), 1.0)
-    k0 = crm.doppler_k0(553.548, 1, 3, 1.19e8, 1500, 137.33)
-    assert 2.5e-11 < k0 < 4e-11
+def test_wang_format_roundtrip(tmp_path):
+    pytest.importorskip("openpyxl")
+    from pydbsr import reference
+    from pydbsr.nist import Level
+    lv = [Level("5p5", "2P*", 3, 0.0, -1, 1), Level("5p4(3P2)6s", "2[2]", 5, 93068.44, 1, 2)]
+    E = np.array([11.6, 12.0, 15.0])
+    reference.write_xlsx(tmp_path / "s.xlsx", lv, {(1, 2): (E, np.array([1.0, 0.5, 0.2]) * 1e-16)},
+                         sheet_of=lambda k: "gs->6s")
+    ref = reference.read_xlsx(tmp_path / "s.xlsx")
+    assert [l.no for l in ref.levels] == [1, 2] and abs(ref.levels[1].energy_cm - 93068.44) < 0.1
+    e, s = ref.sigma[(1, 2)]
+    assert np.allclose(e, E) and np.allclose(s, [1e-16, 0.5e-16, 0.2e-16])
+    reference.write_rates_xlsx(tmp_path / "k.xlsx", [1.0, 2.0], {(1, 2): [1e-14, 2e-13]})
+    assert (tmp_path / "k.csv").read_text().splitlines()[1].startswith("1.0,1.00000e-14")

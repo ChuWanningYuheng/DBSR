@@ -1,4 +1,9 @@
-"""Helpers for the CRM notebooks: background runs, reference data, line cross sections."""
+"""Helpers for the atomic-data notebooks: selected lines, background runs, reference data.
+
+The selected lines and the reasons for the choice: docs/crm/lines_final.md.
+Level numbers of Xe II are those of Wang et al (2019), CrossSectionsIon.xlsx
+(sheet "NIST Level Table").
+"""
 from __future__ import annotations
 
 import csv
@@ -13,6 +18,35 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 CM_PER_EV = 8065.544
+
+# Xe II lines for ne/Te (docs/crm/lines_final.md): wavelength (NIST, air), upper -> lower (Wang numbers)
+XE2_LINES = [
+    dict(wl=545.045, upper=44, lower=16, role="ne"),
+    dict(wl=545.090, upper=51, lower=24, role="Te"),
+    dict(wl=561.667, upper=41, lower=15, role="ne"),
+    dict(wl=543.896, upper=39, lower=13, role="Te"),
+    dict(wl=553.107, upper=29, lower=7, role="Te"),
+]
+XE2_UPPERS = sorted({x["upper"] for x in XE2_LINES})
+# all 5p4 6p levels of Wang's table: their branches are computed too (seconds), to compare with
+# every A known in NIST (validation of the target model)
+XE2_VALIDATION_UPPERS = [25, 26, 29, 30, 31, 35, 37, 39, 40, 41, 42, 44, 46, 49, 51, 52, 53, 54, 56]
+# lines from the same upper level: their intensity ratio depends only on the A ratio (and on the
+# spectral sensitivity): a test of the computed A against the measured spectrum
+XE2_SAME_UPPER = [(545.045, 575.103), (545.045, 610.143), (545.090, 589.329), (545.090, 597.113),
+                  (561.667, 680.574), (553.107, 541.915)]
+
+# Ba lines (docs/crm/lines_final.md); A: NIST ASD (all branches of the upper level known)
+BA_LINES = [
+    dict(ion="Ba I", wl=553.548, upper="6s.6p 1P* J=1", lower="6s2 1S J=0",
+         A=1.19e8, A_branches={553.548: 1.19e8, 1499.985: 2.5e5, 1130.303: 1.1e5, 1107.570: 3.1e3}),
+    dict(ion="Ba II", wl=455.403, upper="6p 2P* J=3/2", lower="6s 2S J=1/2",
+         A=1.11e8, A_branches={455.403: 1.11e8, 614.171: 4.12e7, 585.368: 6.00e6}),
+    dict(ion="Ba II", wl=493.408, upper="6p 2P* J=1/2", lower="6s 2S J=1/2",
+         A=9.53e7, A_branches={493.408: 9.53e7, 649.690: 3.10e7}),
+]
+for _x in BA_LINES:
+    _x["branching"] = _x["A"] / sum(_x["A_branches"].values())
 
 
 # ---------------------------------------------------------------- background runs

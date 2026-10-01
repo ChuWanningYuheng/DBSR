@@ -18,9 +18,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+import numpy as np
+
 from . import io
 from .atoms import Ion
-from .constants import EV_CM
+from .constants import AU_CM, EV_CM
 
 ASD_URL = "https://physics.nist.gov/cgi-bin/ASD/energy1.pl"
 LINES_URL = "https://physics.nist.gov/cgi-bin/ASD/lines1.pl"
@@ -258,15 +260,24 @@ def _open_shells(sh: dict) -> dict:
 
 
 def assign(states, levels: Sequence[Level] | str | Ion, overwrite: bool = True,
-           verbose: bool = True) -> list[tuple]:
+           verbose: bool = True, method: str = "energy", penalty_ev: float = 0.5) -> list[tuple]:
     """Assign NIST levels to computed states.
 
-    States and levels are grouped by (open-shell configuration, J, parity) and
-    matched in energy order within each group.  States from a calculation with
-    several interacting configurations (``State.configs``) form one group with
-    the levels of all those configurations, because their dominant
-    configuration may differ from the NIST designation.  Sets
-    ``state.exp_energy_cm``, ``state.nist_label`` and ``state.nist_no``.
+    States and levels are grouped by (open-shell configuration, J, parity).
+    States from a calculation with several interacting configurations
+    (``State.configs``) form one group with the levels of all those
+    configurations, because their dominant configuration may differ from the
+    NIST designation.  Within a group:
+
+    * ``method="energy"``: matched in energy order;
+    * ``method="config"``: optimal one-to-one matching (Hungarian algorithm) with
+      the cost |E_calc - E_NIST - shift| + ``penalty_ev`` if the dominant
+      configuration of the state differs from the NIST configuration; ``shift``
+      is the median calc - NIST difference of the energy-order matching.  Use
+      it when close levels of different configurations come out in the wrong
+      order (Xe II: (3P2)6s and (3P2)5d J = 3/2).
+
+    Sets ``state.exp_energy_cm``, ``state.nist_label`` and ``state.nist_no``.
     Returns a list of (state, level or None).
     """
     if isinstance(levels, (str, Ion)):
@@ -295,12 +306,35 @@ def assign(states, levels: Sequence[Level] | str | Ion, overwrite: bool = True,
             continue
         g = group_of[oshell({(n, l): q for n, l, q in io.parse_config(s.config)})]
         sgroups.setdefault((g, s.two_j, s.parity), []).append(s)
-    result = []
+    pairs: dict = {}
     for key, sts in sgroups.items():
         sts.sort(key=lambda s: s.energy)
         lvs = groups.get(key, [])
-        for i, s in enumerate(sts):
-            lv = lvs[i] if i < len(lvs) else None
+        pairs[key] = [(s, lvs[i] if i < len(lvs) else None) for i, s in enumerate(sts)]
+    if method == "config":
+        from scipy.optimize import linear_sum_assignment
+        e0 = min(s.energy for s in states)
+        exc = {id(s): (s.energy - e0) * AU_CM for s in states}
+        diffs = [exc[id(s)] - lv.energy_cm for v in pairs.values() for s, lv in v if lv is not None]
+        shift = float(np.median(diffs)) if diffs else 0.0
+        pen = penalty_ev * 8065.544
+        for key, sts in sgroups.items():
+            lvs = groups.get(key, [])
+            if not lvs:
+                continue
+            cost = np.empty((len(sts), len(lvs)))
+            for a, s in enumerate(sts):
+                so = oshell({(n, l): q for n, l, q in io.parse_config(s.config)})
+                for b, lv in enumerate(lvs):
+                    cost[a, b] = abs(exc[id(s)] - lv.energy_cm - shift) + (pen if oshell(lv.shells()) != so else 0.0)
+            ra, cb = linear_sum_assignment(cost)
+            got = dict(zip(ra, cb))
+            pairs[key] = [(s, lvs[got[a]] if a in got else None) for a, s in enumerate(sts)]
+    elif method != "energy":
+        raise ValueError(f"method={method!r}: 'energy' or 'config'")
+    result = []
+    for key, prs in pairs.items():
+        for s, lv in prs:
             if lv is not None and (overwrite or s.exp_energy_cm is None):
                 s.exp_energy_cm = lv.energy_cm
                 s.nist_no = lv.no

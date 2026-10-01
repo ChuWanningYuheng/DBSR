@@ -26,6 +26,27 @@ def test_assign():
     assert res["e"] is None and st[4].exp_energy_cm is None
 
 
+
+def test_assign_config_method():
+    """Calculated order of a 6s and a 5d level with the same J opposite to the experiment:
+    energy order swaps them, the configuration-aware matching does not."""
+    from pydbsr.constants import AU_CM
+    lv = [nist.Level("5s2.5p5", "2P*", 3, 0.0, -1, 1),
+          nist.Level("5s2.5p4.(3P<2>).6s", "2[2]", 3, 95064.38, 1, 5),
+          nist.Level("5s2.5p4.(3P<2>).5d", "2[2]", 3, 96033.48, 1, 8)]
+    conf = ["5s2 5p4 6s", "5s2 5p4 5d"]
+    e = lambda cm: -1.0 + cm / AU_CM
+    mk = lambda: [State("g", "5s2 5p5", "", 3, -1, -1.0),
+                  State("d", "5s2 5p4 5d", "", 3, 1, e(91900.0), configs=conf),   # 5d below 6s
+                  State("s", "5s2 5p4 6s", "", 3, 1, e(94100.0), configs=conf)]
+    st = mk()
+    nist.assign(st, lv, verbose=False)
+    assert (st[1].nist_no, st[2].nist_no) == (5, 8)                  # swapped by energy order
+    st = mk()
+    nist.assign(st, lv, verbose=False, method="config")
+    assert (st[1].nist_no, st[2].nist_no) == (8, 5)
+
+
 ASCII = """<html><body><pre>
 -----------------------------------------------------------------
  Configuration       | Term  |   J |      Level (cm-1)      |

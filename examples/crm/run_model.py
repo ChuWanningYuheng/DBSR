@@ -1,22 +1,28 @@
-"""Background calculation for one CRM model (started by the notebooks).
+"""Background calculation of atomic data for one model (started by the notebooks).
 
-    python run_model.py --model ba2 --workdir RUN/ba2 --stage all --jmax 25 --cores 32 --mem 100
+    python run_model.py --model ba2 --workdir RUN/ba2 --stage all --jmax 20 --cores 32 --mem 100
 
 Stages (each one is skipped if its result exists; re-run to continue):
-  target       Target (dbsr_hf / mchf), NIST levels      -> target/, target_table.txt
-  transitions  E1 (+ M1, E2 for metastables) A-values     -> transitions_E1.csv, ...
-  scattering   inner region, partial waves J <= jmax      -> scat/h.nnn
-  outer        collision strengths on an energy grid     -> omega_J<jmax>.npz
-  crm          rate coefficients + A in one file          -> crm_<model>.json
+  target       Target (dbsr_hf / mchf), NIST levels assigned   -> target/, target_table.txt
+  transitions  A-values, gf, S (E1, E2) between target states   -> transitions_E1.csv, transitions_E2.csv
+               (--uppers 29,41,44,51: only the branches of these upper levels, NIST/Wang numbers)
+  scattering   inner region, partial waves J <= jmax            -> scat/h.nnn
+  outer        collision strengths on an energy grid           -> omega_J<jmax>.npz
+  sigma        excitation cross sections, Wang's xlsx layout   -> sigma_<model>.xlsx
+  rates        Maxwellian <sigma v>(Te) on the --te grid        -> rates_<model>.xlsx / .csv
   all          everything above in this order
-  bound        bound (N+1)-electron states (dbsr_hd3 itype=-1; separate run,
-               e.g. --jmax 4 in another workdir: matrices are rebuilt) -> bound_states.csv
+  bound        bound (N+1)-electron states (dbsr_hd3 itype=-1; separate run, e.g. --jmax 4
+               in another workdir: the matrices are rebuilt)  -> bound_states.csv
 
-Models: see models.py (xe2_wang, xe2_ext, ba2, ba1).
+Level numbers in all output files are NIST numbers (state.nist_no; for xe2_wang
+with --levels CrossSectionsIon.xlsx they are Wang's numbers).
+
+Models: see models.py (xe2_wang, ba2, ba1).
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
 import time
 from pathlib import Path
@@ -25,11 +31,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pydbsr as db                      # noqa: E402
-from pydbsr import crm                   # noqa: E402
+from pydbsr import reference             # noqa: E402
+from pydbsr.nist import Level            # noqa: E402
 from pydbsr.transitions import TransitionTable, transitions  # noqa: E402
 from models import MODELS                # noqa: E402
 
-TE_GRID = np.array([0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0])   # eV
+TE_DEFAULT = "0.3,0.5,0.7,1,1.5,2,3,5,7,10,15,20"
 K_PER_EV = 11604.518
 
 
@@ -41,10 +48,12 @@ def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--model", required=True, choices=sorted(MODELS))
     p.add_argument("--workdir", required=True)
-    p.add_argument("--stage", default="all", choices=["target", "transitions", "scattering", "outer", "crm", "all", "bound"])
-    p.add_argument("--levels", default=None, help="NIST level table (Wang xlsx for xe2_wang) instead of NIST ASD")
+    p.add_argument("--stage", default="all",
+                   choices=["target", "transitions", "scattering", "outer", "sigma", "rates", "all", "bound"])
+    p.add_argument("--levels", default=None, help="level table (Wang xlsx for xe2_wang) instead of NIST ASD")
     p.add_argument("--emax-states", type=float, default=None, help="keep target states up to this energy, eV")
     p.add_argument("--no-corr", action="store_true", help="no correlation orbital")
+    p.add_argument("--uppers", default=None, help="transitions only from these upper levels (NIST/Wang numbers)")
     p.add_argument("--jmax", type=float, default=10.0)
     p.add_argument("--cores", type=int, default=16)
     p.add_argument("--mem", type=float, default=60.0, help="GB")
@@ -53,21 +62,18 @@ def main(argv=None):
     p.add_argument("--scratch-gb", type=float, default=None)
     p.add_argument("--emax", type=float, default=40.0, help="max electron energy above the ground state, eV")
     p.add_argument("--de", type=float, default=0.0136, help="energy step, eV")
+    p.add_argument("--te", default=TE_DEFAULT, help="Te grid for the rate coefficients, eV (comma separated)")
     p.add_argument("--multipoles", default="E1,E2",
                    help="radiative transitions (M1 is not used: dbsr_dmat3 stops with SIGSEGV for M1 on c-files)")
     a = p.parse_args(argv)
 
     wd = Path(a.workdir)
     wd.mkdir(parents=True, exist_ok=True)
-    stages = ["target", "transitions", "scattering", "outer", "crm"] if a.stage == "all" else [a.stage]
+    stages = ["target", "transitions", "scattering", "outer", "sigma", "rates"] if a.stage == "all" else [a.stage]
 
     levels = None
     if a.levels:
-        if a.levels.endswith(".xlsx"):
-            from pydbsr import reference
-            levels = reference.read_xlsx(a.levels).levels
-        else:
-            levels = db.nist.read_levels(a.levels)
+        levels = reference.read_xlsx(a.levels).levels if a.levels.endswith(".xlsx") else db.nist.read_levels(a.levels)
     kw = dict(jobs=min(a.cores, 8), levels=levels, corr=not a.no_corr)
     if a.emax_states is not None:
         kw["emax_ev"] = a.emax_states
@@ -75,14 +81,21 @@ def main(argv=None):
     tg, states = MODELS[a.model](wd / "target", **kw)
     (wd / "target_table.txt").write_text(tg.table(states))
     log(f"{len(states)} states with NIST levels (of {len(tg.states)})")
+    by_no = {s.nist_no: s for s in states}
 
     if "transitions" in stages:
         for kind in a.multipoles.split(","):
             out = wd / f"transitions_{kind}.csv"
             if out.exists():
                 continue
-            log(f"transitions {kind}")
-            tr = transitions(tg, states, kinds=(kind,), jobs=a.cores, workdir=wd / "_transitions", progress=log)
+            pairs = None
+            if a.uppers:
+                ups = [by_no[int(u)] for u in a.uppers.split(",")]
+                pairs = [(s.name, u.name) for u in ups for s in states
+                         if s.name != u.name and s.exp_energy_cm < u.exp_energy_cm]
+            log(f"transitions {kind}" + (f" from levels {a.uppers}" if a.uppers else ""))
+            tr = transitions(tg, states, kinds=(kind,), pairs=pairs, jobs=a.cores, workdir=wd / "_transitions",
+                             progress=log)
             if not tr:
                 log(f"no {kind} lines (all pairs failed?): {out} not written")
                 continue
@@ -107,7 +120,6 @@ def main(argv=None):
                             hd_args={"msol": 30} if itype == -1 else None,
                             scratch=a.scratch, scratch_gb=a.scratch_gb)
         if "bound" in stages:
-            import csv
             from pydbsr.scattering import read_dbound_tab
             db.run("dbound_tab", [], sdir, log="dbound_tab.out")
             rows = read_dbound_tab(sdir / "dbound_tab")
@@ -126,34 +138,42 @@ def main(argv=None):
         cs.save(ofile)
         log(f"-> {ofile}")
 
-    if "crm" in stages and ofile.exists():
+    if {"sigma", "rates"} & set(stages) and ofile.exists():
         cs = db.CollisionStrengths.load(ofile)
-        data = build_crm(a.model, cs, states, [wd / f"transitions_{k}.csv" for k in a.multipoles.split(",")])
-        out = data.save(wd / f"crm_{a.model}.json")
-        log(f"CRM data -> {out}")
+        lv, sig = excitation_sigma(cs, states)
+        if "sigma" in stages:
+            out = reference.write_xlsx(wd / f"sigma_{a.model}.xlsx", lv, sig, sheet_of=lambda k: f"from {k[0]}")
+            log(f"{len(sig)} cross sections -> {out}")
+        if "rates" in stages:
+            te = np.array([float(x) for x in a.te.split(",")])
+            by = {s.nist_no: s.name for s in states}
+            k = {key: cs.rate(by[key[0]], by[key[1]], te * K_PER_EV) for key in sig}
+            out = reference.write_rates_xlsx(wd / f"rates_{a.model}.xlsx", te, k,
+                                             note=f"{a.model}: Maxwellian <sigma v> (cm3/s), excitation i->j "
+                                                  f"(NIST numbers), from Upsilon of {ofile.name}")
+            log(f"rates -> {out}")
     log("done")
 
 
-def build_crm(species, cs, states, a_files) -> crm.CRMData:
-    """Rate coefficients (Maxwellian, from Upsilon) for all pairs + A-values (NIST energies)."""
-    import csv
-    by = {s.name: s for s in states}
-    names = [n for n in cs.names if n in by]
-    lab = [by[n].nist_label or n for n in names]
-    data = crm.CRMData(species, names, [by[n].g for n in names], [by[n].exp_energy_cm for n in names], lab, TE_GRID)
-    T = TE_GRID * K_PER_EV
-    for a_i, i in enumerate(names):
-        for j in names[a_i + 1:]:
-            lo, up = (i, j) if by[i].exp_energy_cm <= by[j].exp_energy_cm else (j, i)
-            data.add_rate(lo, up, cs.rate(lo, up, T), "pydbsr")
-    for f in a_files:
-        if not Path(f).exists():
-            continue
-        for r in csv.DictReader(open(f)):
-            if r["upper"] in data.index and r["lower"] in data.index and r["A_exp"]:
-                data.add_A(r["upper"], r["lower"], float(r["A_exp"]) + data.A.get(
-                    (data.index[r["upper"]], data.index[r["lower"]]), 0.0))
-    return data
+def excitation_sigma(cs, states):
+    """Level table + {(i, j): (E_incident, sigma)} for all excitations i -> j (NIST numbers)."""
+    st = sorted((s for s in states if s.name in cs.names), key=lambda s: s.exp_energy_cm)
+    lv = []
+    for s in st:
+        conf, term = s.config, ""
+        if s.nist_label and " J=" in s.nist_label:
+            head = s.nist_label.rsplit(" J=", 1)[0]
+            conf, _, term = head.rpartition(" ")
+        lv.append(Level(conf, term, s.two_j, s.exp_energy_cm, s.parity, s.nist_no))
+    sig = {}
+    for a_i, i in enumerate(st):
+        for j in st[a_i + 1:]:
+            E = cs.incident_energy(i.name)
+            s = cs.sigma(i.name, j.name)
+            m = np.isfinite(s) & (E > 0)
+            if m.any():
+                sig[(i.nist_no, j.nist_no)] = (E[m], s[m])
+    return sorted(lv, key=lambda x: x.no), sig
 
 
 if __name__ == "__main__":

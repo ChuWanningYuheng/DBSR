@@ -83,3 +83,72 @@ def read_xlsx(path) -> ReferenceData:
             ref.sigma[key] = (e[order], s[order])
             ref.sheet[key] = ws.title
     return ref
+
+
+def write_xlsx(path, levels, sigma: dict, sheet_of=None, labels: dict | None = None):
+    """Write cross sections in the layout of the Wang et al (2019) supplement
+    (readable back by :func:`read_xlsx`).
+
+    ``levels``: list of :class:`pydbsr.nist.Level` (``no``, ``config``, ``term``,
+    ``two_j``, ``energy_cm``) for the "NIST Level Table" sheet.
+    ``sigma``: {(i, j): (E_eV, sigma_cm2)} with level numbers i -> j (or any
+    hashable key with ``labels`` giving the column title, e.g. a line).
+    ``sheet_of``: function key -> sheet name (default: one sheet "sigma").
+    Columns: a pair (Energy(eV), Sigma(1E-16 cm^2)) per transition, the
+    label ``i->j`` stands above the sigma column, as in the original.
+    """
+    import openpyxl
+    from .constants import EV_CM
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "NIST Level Table"
+    ws.append(["No. NIST", "Configuration ", " Term ", " J ", "Energy (eV)"])
+    for lv in levels:
+        j = f"{lv.two_j}/2" if lv.two_j % 2 else f"{lv.two_j // 2}"
+        ws.append([lv.no, lv.config, lv.term.replace("*", "°"), j, round(lv.energy_cm / EV_CM, 6)])
+    groups: dict = {}
+    for key in sigma:
+        groups.setdefault(sheet_of(key) if sheet_of else "sigma", []).append(key)
+    for name, keys in groups.items():
+        sh = wb.create_sheet(name[:31])
+        head, sub, cols = [], [], []
+        for key in keys:
+            lab = labels.get(key) if labels else None
+            head += [None, lab or f"{key[0]}->{key[1]}"]
+            sub += ["Energy(eV)", "Sigma(1E-16 cm^2)"]
+            E, s = sigma[key]
+            cols.append((np.asarray(E, float), np.asarray(s, float) / 1e-16))
+        sh.append(head)
+        sh.append(sub)
+        n = max(len(c[0]) for c in cols)
+        for r in range(n):
+            row = []
+            for E, s in cols:
+                row += [float(E[r]), float(s[r])] if r < len(E) and np.isfinite(s[r]) else [None, None]
+            sh.append(row)
+    wb.save(path)
+    return Path(path)
+
+
+def write_rates_xlsx(path, Te_eV, rates: dict, labels: dict | None = None, sheet: str = "rates", note: str = ""):
+    """Rate coefficients <sigma v> (cm3/s): one row per Te, one column per transition
+    (title ``i->j`` or ``labels[key]``).  Also writes the same table as CSV next to it."""
+    import csv
+    import openpyxl
+    keys = list(rates)
+    titles = [labels.get(k) if labels and k in labels else f"{k[0]}->{k[1]}" for k in keys]
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet[:31]
+    if note:
+        ws.append([note])
+    ws.append(["Te (eV)"] + titles)
+    for n, t in enumerate(Te_eV):
+        ws.append([float(t)] + [float(rates[k][n]) for k in keys])
+    wb.save(path)
+    with open(Path(path).with_suffix(".csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["Te_eV"] + titles)
+        for n, t in enumerate(Te_eV):
+            w.writerow([t] + [f"{rates[k][n]:.5e}" for k in keys])
+    return Path(path)
