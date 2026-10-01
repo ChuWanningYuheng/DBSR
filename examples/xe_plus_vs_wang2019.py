@@ -68,6 +68,8 @@ if not (sdir / "cfg.001").exists() or len(list(sdir.glob("cfg.[0-9][0-9][0-9]"))
     sc.prepare()
     sc.run_prep()
     sc.run_conf()
+elif not (sdir / "cfg_conf3").exists():
+    sc.run_conf()                # run made by older pydbsr: clean cfg.nnn (dbsr_mat3 appends to them)
 sc.complete_target_orb()        # also fixes runs prepared by older pydbsr (see docs/troubleshooting.md)
 for d in sc.wave_sizes()[:4] + sc.wave_sizes()[-2:]:
     print(d)

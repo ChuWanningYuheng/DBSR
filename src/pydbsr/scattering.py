@@ -237,6 +237,17 @@ class Scattering:
             run("dbsr_conf3_mpi", [], self.workdir, echo=self.echo, log="dbsr_conf3.out", mpi=self.mpi)
         else:
             run("dbsr_conf3", [], self.workdir, echo=self.echo, log="dbsr_conf3.out")
+        self._save_cfg()
+
+    def _save_cfg(self):
+        """Keep the cfg.nnn written by dbsr_conf3: dbsr_mat3 appends its own
+        orthogonality conditions to cfg.nnn, and a killed or failed attempt
+        (out of memory, disk full) can leave a corrupted file.  run_streamed
+        restores the pristine copy before every attempt."""
+        bak = self.workdir / "cfg_conf3"
+        bak.mkdir(exist_ok=True)
+        for f in self.workdir.glob("cfg.[0-9][0-9][0-9]"):
+            shutil.copy2(f, bak / f.name)
 
     def _pw(self, program, args=(), wave_args=None):
         klsps = range(1, self.nlsp + 1)
@@ -455,6 +466,10 @@ class Scattering:
                     scratch_free[0] -= need
                     base = scratch
             sb, copied = _sandbox(wd, f"wave_{k:03d}", base)
+            clean = wd / "cfg_conf3" / f"cfg.{k:03d}"
+            if clean.exists():                   # undo conditions left by a failed attempt
+                (sb / clean.name).unlink(missing_ok=True)
+                shutil.copy(clean, sb / clean.name)
             try:
                 tb = step(sb, "dbsr_breit3", [], 1, 1.0, k)
                 tm = step(sb, "dbsr_mat3", self._mat_args(k), 1, d["mat_gb"], k)
