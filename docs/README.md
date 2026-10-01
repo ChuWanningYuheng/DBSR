@@ -19,6 +19,7 @@ DBSR (O. Zatsarinny, K. Bartschat) для сечений возбуждения 
 | [validation.md](validation.md) | Стресс-тест и что он проверяет |
 | [troubleshooting.md](troubleshooting.md) | Ошибки DBSR и что с ними делать |
 | [api.md](api.md) | Справочник по API |
+| [crm_plan.md](crm_plan.md) | План CRM для Xe II, Ba I, Ba II: какие данные нужны, что есть у Ванга/Fursa/NIST, валидация, линии для ne и Te |
 | [dbsr_programs.md](dbsr_programs.md) | Цепочка программ DBSR, файлы, прямой вызов любой программы |
 
 ## Схема расчёта
