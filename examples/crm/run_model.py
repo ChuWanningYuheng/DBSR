@@ -8,7 +8,9 @@ Stages (each one is skipped if its result exists; re-run to continue):
   scattering   inner region, partial waves J <= jmax      -> scat/h.nnn
   outer        collision strengths on an energy grid     -> omega_J<jmax>.npz
   crm          rate coefficients + A in one file          -> crm_<model>.json
-  all          everything in this order
+  all          everything above in this order
+  bound        bound (N+1)-electron states (dbsr_hd3 itype=-1; separate run,
+               e.g. --jmax 4 in another workdir: matrices are rebuilt) -> bound_states.csv
 
 Models: see models.py (xe2_wang, xe2_ext, ba2, ba1).
 """
@@ -39,7 +41,7 @@ def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--model", required=True, choices=sorted(MODELS))
     p.add_argument("--workdir", required=True)
-    p.add_argument("--stage", default="all", choices=["target", "transitions", "scattering", "outer", "crm", "all"])
+    p.add_argument("--stage", default="all", choices=["target", "transitions", "scattering", "outer", "crm", "all", "bound"])
     p.add_argument("--levels", default=None, help="NIST level table (Wang xlsx for xe2_wang) instead of NIST ASD")
     p.add_argument("--emax-states", type=float, default=None, help="keep target states up to this energy, eV")
     p.add_argument("--no-corr", action="store_true", help="no correlation orbital")
@@ -89,10 +91,10 @@ def main(argv=None):
 
     sdir = wd / "scat"
     sc = None
-    if "scattering" in stages or "outer" in stages:
+    if {"scattering", "outer", "bound"} & set(stages):
         pw = db.partial_waves(tg.ion.nelc, a.jmax)
         sc = db.Scattering(tg, sdir, states=states, partial_waves=pw, exp_energies=True)
-        if "scattering" in stages:
+        if "scattering" in stages or "bound" in stages:
             if not (sdir / "cfg.001").exists() or len(list(sdir.glob("cfg.[0-9][0-9][0-9]"))) < len(pw):
                 log("prepare / prep / conf")
                 sc.prepare()
@@ -100,8 +102,21 @@ def main(argv=None):
                 sc.run_conf()
             sc.complete_target_orb()
             log(f"{len(pw)} partial waves, J <= {a.jmax:g}")
-            sc.run_streamed(cores=a.cores, mem_gb=a.mem, hd_threads=a.hd_threads,
+            itype = -1 if "bound" in stages else 0
+            sc.run_streamed(cores=a.cores, mem_gb=a.mem, hd_threads=a.hd_threads, itype=itype,
+                            hd_args={"msol": 30} if itype == -1 else None,
                             scratch=a.scratch, scratch_gb=a.scratch_gb)
+        if "bound" in stages:
+            import csv
+            from pydbsr.scattering import read_dbound_tab
+            db.run("dbound_tab", [], sdir, log="dbound_tab.out")
+            rows = read_dbound_tab(sdir / "dbound_tab")
+            if rows:
+                with open(wd / "bound_states.csv", "w", newline="") as f:
+                    w = csv.DictWriter(f, fieldnames=list(rows[0]))
+                    w.writeheader()
+                    w.writerows(rows)
+            log(f"{len(rows)} bound states -> {wd / 'bound_states.csv'}")
 
     ofile = wd / f"omega_J{a.jmax:g}.npz"
     if "outer" in stages and not ofile.exists():

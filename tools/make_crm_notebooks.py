@@ -460,15 +460,18 @@ for kind in ("E1", "M1", "E2"):
 '''),
     md("## 4. Связанные состояния e + Ba⁺ = уровни Ba I"),
     code('''
-sc = db.Scattering.load(W / "scat")
-bound = sc.bound_states(msol=30)
+# отдельный короткий прогон (J <= 4): dbsr_hd3 itype=-1 на заново построенных матрицах
+jb = nb.Job(RUNS / "ba2_bound", "ba2", stage="bound", jmax=4, cores=CORES, mem=MEM, hd_threads=HD_THREADS)
+jb.start()
+'''),
+    code('''
+jb.status()
 lv1 = db.nist.fetch_levels("Ba I")
-ip = 42034.91                                   # потенциал ионизации Ba I, см-1
-for b in sorted(bound, key=lambda b: b["E_bind"])[:15]:
-    e = ip + b["E_cm"] if b["E_cm"] < 0 else None
-    near = min(lv1, key=lambda l: abs(l.energy_cm - (ip - abs(b["E_cm"]))))
-    print(f"{b['label']:>12s} 2J={b['two_j']} p={b['parity']:+d}  E = {ip - abs(b['E_cm']):9.1f} см-1   "
-          f"NIST: {near.config} {near.term} {near.J}  {near.energy_cm:9.1f}")
+for b in sorted(nb.read_csv(RUNS / "ba2_bound" / "bound_states.csv"), key=lambda b: float(b["E_cm"]))[:20]:
+    e = float(b["E_cm"])                      # над самым нижним связанным состоянием (Ba I 6s2)
+    near = min(lv1, key=lambda l: abs(l.energy_cm - e))
+    print(f"{b['label']:>14s}  E = {e:9.1f} см-1  (связь {float(b['E_bind']):8.4f})   "
+          f"ближайший NIST: {near.config} {near.term} J={near.J:g}  {near.energy_cm:9.1f}  Δ = {e - near.energy_cm:+7.0f}")
 '''),
     md("## 5. Сечения и константы скорости"),
     code('''
