@@ -404,7 +404,7 @@ for r in lines:
 for x in sorted(rows):
     print(f"{x[0]:8.3f}  {x[1]:28s} BR = {x[2]:.3f}  k_line(1, 2, 5 эВ) = {x[3]:.2e} {x[4]:.2e} {x[5]:.2e}")
 '''),
-    md("Данные CRM (все пары, A): `crm_xe2_ext.json` — пишет стадия `crm` (ноутбук 06)."),
+    md("Данные для CRM (все пары, A): `crm_xe2_ext.json` — пишет стадия `crm`."),
 ])
 
 # ====================================================================== 04 Ba II
@@ -632,69 +632,5 @@ for tau in (2e-6, 2e-5):
              for ne in NE]
         plt.semilogx(NE, y, label=f"τ = {tau:g} с, Te = {te} эВ")
 plt.xlabel("ne, см⁻³"); plt.ylabel("I(553.5): CRM / корональная"); plt.legend(fontsize=7); plt.show()
-'''),
-])
-
-# ====================================================================== 06 CRM assembly
-notebook("06_crm_assembly.ipynb", [
-    md("""
-# 06. Сборка CRM: ne, Te по линиям Xe II, затем n(Ba), n(Ba⁺)
-
-1. Данные: `crm_xe2_ext.json` (или предварительный `crm_xe2_wang_prelim.json` из 02),
-   `crm_ba1.json`, `crm_ba2.json`.
-2. Измеренные интенсивности линий (площади гауссов, **с поправкой на спектральную
-   чувствительность**, в фотонах) — таблица `MEASURED`.
-3. Подгонка ne, Te (и τ) по отношениям линий Xe II (χ²).
-4. n(Ba)/n(Xe⁺) и n(Ba⁺)/n(Xe⁺) из 553.5 и 455.4/493.4 при найденных ne, Te, с учётом
-   пленения (фактор выхода).
-"""),
-    code(PARAMS),
-    code('''
-def load(*names):
-    for n in names:
-        p = RUNS / n
-        if p.exists():
-            print("данные:", p); return crm.CRMData.load(p)
-xe = load("xe2_ext/crm_xe2_ext.json", "xe2_wang/crm_xe2_wang_prelim.json")
-ba1 = load("ba1/crm_ba1.json"); ba2 = load("ba2/crm_ba2.json")
-'''),
-    md("""
-## Измеренные интенсивности
-
-λ (нм) → интенсивность в фотонах (относительные единицы, одна шкала для всех линий).
-Пример — впишите свои. Для Xe II нужны номера уровней (верхний, нижний) в нумерации
-данных `xe` (для данных Ванга это номера Ванга, см. `lines.csv`).
-"""),
-    code('''
-MEASURED = {          # (верхний, нижний): (λ, интенсивность, относит. погрешность)
-    # ("41", "15"): (561.667, 1.0, 0.05),
-    # ("44", "16"): (545.045, 0.8, 0.10),
-}
-TAU_XE = 3e-6
-'''),
-    code('''
-from scipy.optimize import least_squares
-keys = list(MEASURED)
-def model(par):
-    ne, te = 10 ** par[0], par[1]
-    p = crm.steady_state(xe, ne, te, tau=TAU_XE)
-    return np.array([crm.line_emission(xe, p, *k) for k in keys])
-def resid(par):
-    m = model(par); y = np.array([MEASURED[k][1] for k in keys]); s = np.array([MEASURED[k][2] for k in keys])
-    scale = np.sum(y * m / s**2) / np.sum(m * m / s**2)            # общая нормировка (n(Xe+)·геометрия)
-    return (y - scale * m) / (s * y)
-if len(keys) >= 3:
-    fit = least_squares(resid, x0=[11.0, 1.2], bounds=([9, 0.3], [13.5, 10]))
-    J = fit.jac; cov = np.linalg.pinv(J.T @ J) * max(1, 2 * fit.cost / max(1, len(keys) - 2))
-    print(f"ne = {10**fit.x[0]:.2e} см-3 (± {np.log(10) * np.sqrt(cov[0,0]) * 100:.0f} %),  Te = {fit.x[1]:.2f} ± {np.sqrt(cov[1,1]):.2f} эВ")
-else:
-    print("впишите хотя бы 3 линии в MEASURED")
-'''),
-    md("## Пленение резонансных линий бария (оценка)"),
-    code('''
-L_CM = 1.0                                   # длина пути вдоль луча зрения, см
-for n_ba in (1e8, 1e9, 1e10, 1e11):
-    t553 = crm.doppler_k0(553.548, 1, 3, 1.19e8, 1500, 137.33) * n_ba * L_CM
-    print(f"n(Ba) = {n_ba:.0e}:  τ0(553.5) = {t553:.2g},  фактор выхода {crm.escape_factor_doppler(t553):.2f}")
 '''),
 ])
