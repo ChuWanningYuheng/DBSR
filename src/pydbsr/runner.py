@@ -167,6 +167,8 @@ def run(program: str, args: Sequence[str] = (), cwd: str | Path = ".", *,
     if check:
         msg = error_message(out)
         if proc.returncode != 0 or msg:
+            if not msg and proc.returncode == -9:
+                msg = "killed by SIGKILL (exit code -9): most likely out of memory (Linux OOM killer)"
             raise DBSRError(program, cwd, msg or f"exit code {proc.returncode}", "".join(lines[-25:]))
     return res
 

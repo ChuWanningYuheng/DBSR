@@ -334,6 +334,7 @@ class Scattering:
             n, nc = nch.get(k, (0, 0))
             khm = n * max(ns - 6, 1) + nc
             full = khm * khm * 8 / 1e9                     # one dense matrix, GB
+            # dbsr_mat3: 'matrix memory' in mat_log = 1.75 dense matrices (Xe+, J=0);
             # dbsr_hd3: H, S, eigenvectors + DSYEVD workspace (2 n^2) -> ~4.6 dense matrices
             try:
                 mk = int(self._mat_args(k)[0].split("=")[1]) if self._mat_args(k) else int(self.params["mk"])
@@ -341,7 +342,7 @@ class Scattering:
                 mk = 7
             rk_gb = 4 * ns * ns * ks * ks * (mk + 1) * 8 / 1e9   # dbsr_mat3 Rk integrals
             out.append(dict(klsp=k, two_j=self.partial_waves[k - 1][0], parity=self.partial_waves[k - 1][1],
-                            nch=n, khm=khm, mk=mk, mat_gb=1.0 + rk_gb + 0.3 * full, hd_gb=1.0 + 4.6 * full,
+                            nch=n, khm=khm, mk=mk, mat_gb=1.0 + rk_gb + 1.8 * full, hd_gb=1.0 + 4.6 * full,
                             disk_gb=0.5 * full))
         return out
 
@@ -395,8 +396,9 @@ class Scattering:
         def step(sb, prog, args, ncores, mem, k):
             c, m = pool.acquire(ncores, mem)
             try:
-                return run(prog, [f"klsp1={k}", f"klsp2={k}", *args], sb, threads=c,
-                           log=f"{prog}.out.{k:03d}")
+                r = run(prog, [f"klsp1={k}", f"klsp2={k}", *args], sb, threads=c,
+                        log=f"{prog}.out.{k:03d}")
+                return r.seconds
             finally:
                 pool.release(c, m)
 
@@ -411,9 +413,10 @@ class Scattering:
                     base = scratch
             sb, copied = _sandbox(wd, f"wave_{k:03d}", base)
             try:
-                step(sb, "dbsr_breit3", [], 1, 1.0, k)
-                step(sb, "dbsr_mat3", self._mat_args(k), 1, d["mat_gb"], k)
-                step(sb, "dbsr_hd3", hd, hd_threads, d["hd_gb"], k)
+                tb = step(sb, "dbsr_breit3", [], 1, 1.0, k)
+                tm = step(sb, "dbsr_mat3", self._mat_args(k), 1, d["mat_gb"], k)
+                th = step(sb, "dbsr_hd3", hd, hd_threads, d["hd_gb"], k)
+                d["times"] = (tb, tm, th)
                 if cleanup:
                     for f in (f"dbsr_mat.{k:03d}", f"int_bnk.{k:03d}"):
                         p = sb / f
@@ -443,7 +446,9 @@ class Scattering:
                     failed.append((d["klsp"], e))
                     self._log(f"  {tag}: FAILED: {e}")
                     continue
-                self._log(f"  {tag}: done in {t / 60:.1f} min")
+                tb, tm, th = d.get("times", (0, 0, 0))
+                self._log(f"  {tag}: done; breit {tb / 60:.0f} + mat {tm / 60:.0f} + hd {th / 60:.0f} min "
+                          f"of computing, {t / 60:.0f} min since the start (incl. waiting for cores/memory)")
         for d in ([wd / "_parallel"] + ([scratch] if scratch is not None else [])):
             try:
                 d.rmdir()
