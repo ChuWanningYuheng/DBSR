@@ -186,7 +186,50 @@ class Scattering:
         args = [f"{k}={v}" for k, v in self.prep_args.items()]
         self._log("dbsr_prep3")
         run("dbsr_prep3", args, self.workdir, echo=self.echo, log="dbsr_prep3.out")
+        self.complete_target_orb()
         self._write_thresholds()
+
+    def complete_target_orb(self, min_coef: float = 0.1) -> int:
+        """Add to ``target_orb`` the orbitals of all CSFs with |c| >= ``min_coef``.
+
+        dbsr_prep3 lists as physical orbitals of a target state only those of
+        its leading CSF (sub_phys_orb.f90: ``Do jc = 1,1``).  For strongly mixed
+        states (e.g. Xe+ 5p4 5d / 5p4 6s with 5d-/6s weights ~0.4) the missing
+        orbitals break two things: dbsr_conf3 truncates the spectroscopic
+        configuration at the first CSF with a non-physical orbital, and
+        dbsr_mat3 cannot impose the orthogonality condition for an overlapping
+        channel pair (``STOP I cannot find orth.condition``) or misses it
+        (singular overlap matrix: dbsr_hd3 ``DPOTRF ... failed``).
+        Correlation orbitals (``correlation=``) are not added: the continuum is
+        made orthogonal to them anyway (``orth_conditions``).  The substitution
+        orbital of an added orbital is the orbital itself (one orbital set).
+        Idempotent; returns the number of added entries.  Run ``run_conf()``
+        afterwards if dbsr_conf3 has already been run.
+        """
+        path = self.workdir / "target_orb"
+        if not path.exists():
+            return 0
+        corr = {_norm_orb(sh) for s in self.states for sh in (s.correlation_orbitals or [])}
+        lines = path.read_text().splitlines()
+        out, added, it, have = [], 0, None, []
+        for line in lines:
+            if line.startswith("target"):
+                it, have = int(line.split()[1]), []
+            elif line.startswith("*") and it is not None:
+                occ = _csf_occupations(self.workdir / f"targ_{it:03d}.c", min_coef)
+                for orb, q in occ.items():
+                    if orb in have or _norm_orb(orb) in corr:
+                        continue
+                    out.append(f"{orb:5s}{q:8.1f}     {orb:5s}{1.0:8.3f}")
+                    added += 1
+                it = None
+            elif it is not None and line.strip():
+                have.append(line[:5])
+            out.append(line)
+        if added:
+            path.write_text("\n".join(out) + "\n")
+            self._log(f"target_orb: {added} physical orbital(s) of non-leading CSFs added")
+        return added
 
     def run_conf(self):
         self._log("dbsr_conf3")
@@ -536,3 +579,32 @@ def read_dbound_tab(path) -> list[dict]:
                             E_Ry=float(f[5]), E_eV=float(f[6]), E_cm=float(f[7]), E_au=float(f[8]),
                             E_bind=float(f[9]), target=int(f[10]), channel=int(f[11])))
     return out
+
+
+_CSF_SHELL = re.compile(r"(.{5})\(\s*(\d+)\)")
+
+
+def _norm_orb(name: str) -> str:
+    """'5d-' / ' 5d-1' -> '5d-' (orbital without set index)."""
+    m = re.match(r"\s*(\d+[a-z]-?)", name)
+    return m.group(1) if m else name.strip()
+
+
+def _csf_occupations(cfile: Path, min_coef: float) -> dict[str, float]:
+    """Occupations sum c^2 q of the orbitals (DBSR 5-character labels) in the
+    CSFs of a target .c file with |c| >= min_coef, in order of appearance."""
+    occ: dict[str, float] = {}
+    norm = 0.0
+    with open(cfile) as f:
+        for line in f:
+            if line.startswith("*"):
+                break
+            if len(line) < 6 or line[5] != "(":
+                continue
+            c = float(line[line.rindex(")") + 1:].split()[0])
+            if abs(c) < min_coef:
+                continue
+            norm += c * c
+            for lab, q in _CSF_SHELL.findall(line[:line.rindex(")") + 1]):
+                occ[lab] = occ.get(lab, 0.0) + c * c * int(q)
+    return {k: v / norm for k, v in occ.items()} if norm else {}

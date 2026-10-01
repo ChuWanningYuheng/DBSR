@@ -42,3 +42,29 @@ def test_cfg_orbitals_high_l(tmp_path):
     assert sorted(l for c, l in orbs if c) == [1, 8, 30, 54]
     assert max(l for c, l in orbs if not c) == 2
     assert sc.multipole_max(1) == 56
+
+
+def test_complete_target_orb(tmp_path):
+    """Orbitals of non-leading CSFs (5d- here) are added to target_orb, correlation ones (6d) not."""
+    (tmp_path / "targ_001.c").write_text(
+        "Core subshells:  -7446.0\n  1s\nPeel subshells:\n 5s 1 5p-1 5p 1 5d-1 5d 1 6d 1\nCSF(s):\n"
+        " 5s 1( 2) 5p-1( 2) 5p 1( 2) 5d 1( 1)                                      -0.80\n"
+        "                          2      5/2\n                                    5/2-\n"
+        " 5s 1( 2) 5p-1( 2) 5p 1( 2) 5d-1( 1)                                       0.55\n"
+        "                          2      3/2\n                                    5/2-\n"
+        " 5s 1( 2) 5p-1( 2) 5p 1( 2) 6d 1( 1)                                       0.20\n"
+        "                          2      5/2\n                                    5/2-\n"
+        " 5s 1( 2) 5p-1( 1) 5p 1( 3) 5d 1( 1)                                       0.05\n"
+        "               1/2      3/2      5/2\n                           2        5/2-\n"
+        "*\n")
+    head = "target   001      a" + " " * 60 + "\n"
+    orig = (head + " 5s 1     2.0      5s 1   1.000\n 5p-1     2.0      5p-1   1.000\n"
+            " 5p 1     2.0      5p 1   1.000\n 5d 1     1.0      5d 1   1.000\n*\n")
+    (tmp_path / "target_orb").write_text(orig)
+    s = State("a", "5s2 5p4 5d", "", 5, 1, 0.0, correlation_orbitals=["6d-", "6d"])
+    sc = Scattering([s], tmp_path, ion=Ion("Xe", 1), jmax=0, progress=None)
+    assert sc.complete_target_orb() == 1
+    lines = (tmp_path / "target_orb").read_text().splitlines()
+    assert lines[-2] == " 5d-1     0.3      5d-1   1.000"
+    assert lines[-1] == "*"
+    assert sc.complete_target_orb() == 0                     # idempotent
