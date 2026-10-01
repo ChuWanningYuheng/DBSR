@@ -4,8 +4,9 @@
 столкновительно-излучательной модели (CRM). Здесь собрано, какие атомные
 данные нужны, какие из них уже есть (Wang et al 2019, Fursa et al 1999, NIST),
 что считать в DBSR и как проверять результат. Цифры в разделах 1 и 4 получены
-скриптом [examples/crm_line_survey.py](../examples/crm_line_survey.py), таблица
-лежит в [crm/xe2_lines_wang.csv](crm/xe2_lines_wang.csv).
+скриптом [examples/crm/line_list.py](../examples/crm/line_list.py); список линий —
+[crm/lines.md](crm/lines.md) (таблица [crm/lines.csv](crm/lines.csv)). Расчёты —
+ноутбуки [examples/crm/](../examples/crm/README.md).
 
 ## 1. Почему корональной модели мало (оценка по данным Ванга)
 
@@ -176,9 +177,8 @@ NIST Ba I (6s² — это потенциал ионизации 5.21 эВ) пр
 
 ## 4. Линии для диагностики ne и Te (Xe II, 300–700 нм)
 
-Все 193 линии Xe II из 300–700 нм с верхним 6p-уровнем есть в
-[crm/xe2_lines_wang.csv](crm/xe2_lines_wang.csv): σ из основного и из
-метастабилей у Ванга есть для всех. Ограничение — A, а не сечения.
+Все линии Xe II из 300–700 нм с верхним 6p-уровнем (класс A в
+[crm/lines.md](crm/lines.md)): σ из основного и из метастабилей у Ванга есть для всех. Ограничение — A, а не сечения.
 
 **Ваши линии — все верхние уровни есть у Ванга:**
 
@@ -255,8 +255,8 @@ NIST Ba I (6s² — это потенциал ионизации 5.21 эВ) пр
 
 Воспроизведение таблицы:
 ```bash
-python examples/crm_line_survey.py CrossSectionsIon.xlsx docs/crm/nist_XeII.csv \
-    --spectrum A25_second.xlsx --sheet data2 --Te 1.1 --out docs/crm/xe2_lines_wang.csv
+python examples/crm/line_list.py --wang CrossSectionsIon.xlsx --nist-dir docs/crm \
+    --spectrum A25_second.xlsx --sheet data2 --out docs/crm/lines
 ```
 Файлы `docs/crm/nist_*.csv` — выгрузка NIST ASD (lines1.pl, CSV, 250–1100 нм)
 от 2026-10-01.
