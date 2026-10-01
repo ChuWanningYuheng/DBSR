@@ -7,3 +7,4 @@ __pycache__/
 _skbuild/
 build/
 dist/
+pydbsr_offline*.tar.gz
