@@ -5,7 +5,7 @@
 Stages (each one is skipped if its result exists; re-run to continue):
   target       Target (dbsr_hf / mchf), NIST levels assigned   -> target/, target_table.txt
   transitions  A-values, gf, S (E1, E2) between target states   -> transitions_E1.csv, transitions_E2.csv
-               (--uppers 29,41,44,51: only the branches of these upper levels, NIST/Wang numbers)
+               (--uppers 29,39,41,42,51: only the branches of these upper levels, NIST/Wang numbers)
   scattering   inner region, partial waves J <= jmax            -> scat/h.nnn
   outer        collision strengths on an energy grid           -> omega_J<jmax>.npz
   sigma        excitation cross sections, Wang's xlsx layout   -> sigma_<model>.xlsx
