@@ -46,6 +46,10 @@ python examples/crm/line_criteria.py --wang CrossSectionsIon_3.xlsx --spectrum A
 `sensitivity_no_lamp.py`, развёрнутый по шагам для самостоятельного повторения
 (результат — `docs/crm/sensitivity_A3_*.csv`).
 
+Измеренные ветвления (без CRM: линии одного верхнего уровня + кривая чувствительности):
+[branching_from_spectrum.py](branching_from_spectrum.py) → `docs/crm/branching/`, сводка
+`docs/crm/branching_measured.csv` (lines_final.md, п. 6.1).
+
 Ноутбуки генерируются из [tools/make_atomic_data_notebooks.py](../../tools/make_atomic_data_notebooks.py).
 Если pydbsr установлен в режиме разработки (`pip install -e`), задайте `DBSR_BIN` (папка
 `.../site-packages/pydbsr/bin` с собранными программами).
