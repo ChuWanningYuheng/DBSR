@@ -20,17 +20,31 @@ HERE = Path(__file__).resolve().parent
 CM_PER_EV = 8065.544
 
 # Xe II lines for ne/Te (docs/crm/lines_final.md): wavelength (NIST, air), upper -> lower (Wang numbers)
-# br: which branching ratio notebook 02 uses — "dbsr" (all A from DBSR) or "hybrid" (NIST A where
-# NIST has them, the other branches from DBSR); chosen by the check against the A3 spectrum
-# (docs/crm/lines_final.md, part 2): level 29 — NIST confirmed (541.915/553.107: 8.15 measured,
-# 7.05 NIST, 24.7 DBSR); level 41 — NIST A(680.574) not confirmed (2.37 measured, 0.74 NIST, 3.37 DBSR)
+# br: which branching ratio notebook 02 uses —
+#   "dbsr"     all A from DBSR (notebook 01);
+#   "hybrid"   NIST A where NIST has them, the other branches from DBSR (notebook 01);
+#   "measured" measured from the spectra (XE2_BR_MEASURED below).
+# Chosen by the check against the spectra (docs/crm/lines_final.md, 6 and 6.1).
 XE2_LINES = [
     dict(wl=561.667, upper=41, lower=15, role="ne", br="dbsr"),
-    dict(wl=557.219, upper=42, lower=15, role="ne", br="hybrid"),
-    dict(wl=545.090, upper=51, lower=24, role="Te", br="dbsr"),
+    dict(wl=545.045, upper=44, lower=16, role="ne", br="measured"),
+    dict(wl=557.219, upper=42, lower=15, role="ne (запасная)", br="hybrid"),
+    dict(wl=545.090, upper=51, lower=24, role="Te", br="measured"),
     dict(wl=553.107, upper=29, lower=7, role="Te", br="hybrid"),
-    dict(wl=543.896, upper=39, lower=13, role="Te (запасная)", br="hybrid"),
+    dict(wl=543.896, upper=39, lower=13, role="Te (запасная)", br="measured"),
 ]
+# Branching ratios measured from the spectra (examples/crm/branching_from_spectrum.py; photon fluxes of
+# all branches of the upper level / sensitivity curve docs/crm/sensitivity_A3_curve.csv; spectra A1, A3,
+# A15, A25 — docs/crm/branching_measured.csv).  BR: median of BR_corr (unseen UV/IR branches from DBSR);
+# BR_vis: share among the seen branches (upper bound); range: min-max of BR_corr over the spectra.
+XE2_BR_MEASURED = {
+    545.045: dict(BR=0.0556, BR_vis=0.0774, range=(0.0513, 0.0686), n_sheets=10),
+    545.090: dict(BR=0.0136, BR_vis=0.0213, range=(0.0128, 0.0145), n_sheets=10),
+    543.896: dict(BR=0.639, BR_vis=0.681, range=(0.522, 0.650), n_sheets=10),
+    553.107: dict(BR=0.0887, BR_vis=0.1051, range=(0.0881, 0.0892), n_sheets=2),
+    557.219: dict(BR=0.0265, BR_vis=0.0279, range=(0.0186, 0.0277), n_sheets=9),
+    561.667: dict(BR=0.0486, BR_vis=0.0540, range=(0.0468, 0.0544), n_sheets=7),
+}
 XE2_UPPERS = sorted({x["upper"] for x in XE2_LINES})
 # all 5p4 6p levels of Wang's table: their branches are computed too (seconds), to compare with
 # every A known in NIST (validation of the target model)
@@ -40,7 +54,7 @@ XE2_VALIDATION_UPPERS = [25, 26, 29, 30, 31, 35, 37, 39, 40, 41, 42, 44, 46, 49,
 XE2_SAME_UPPER = [(553.107, 541.915), (553.107, 571.961), (557.219, 577.639), (557.219, 526.044),
                   (557.219, 651.283), (545.090, 597.113), (545.090, 589.329), (561.667, 600.892),
                   (561.667, 463.330), (561.667, 680.574), (543.896, 590.513), (543.896, 630.086),
-                  (545.045, 575.103)]
+                  (545.045, 575.103), (545.045, 465.194), (545.045, 610.143)]
 
 # Ba lines (docs/crm/lines_final.md); A: NIST ASD (all branches of the upper level known)
 BA_LINES = [

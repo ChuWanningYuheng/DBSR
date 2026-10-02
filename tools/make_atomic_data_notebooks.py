@@ -206,8 +206,10 @@ notebook("02_xe2_line_cross_sections.ipynb", [
 
 * **σ возбуждения** верхнего уровня u из уровня i — Wang et al (2019), CrossSectionsIon.xlsx
   (листы gs->6p, 6s->6p, 5d->6p; i = 1, 2 — 5p⁵ ²P₃/₂, ²P₁/₂; i ≥ 4 — 6s, 5d);
-* **ветвление** BR = A_line/ΣA — ноутбук 01 (`xe2_A_branching.csv`); для каждой линии
-  выбран вариант «только DBSR» или «A из NIST, где есть» (`nb.XE2_LINES`, поле `br`);
+* **ветвление** BR = A_line/ΣA — ноутбук 01 (`xe2_A_branching.csv`) или измеренное по
+  спектрам (`nb.XE2_BR_MEASURED`, `docs/crm/branching_measured.csv`); для каждой линии
+  выбран вариант «только DBSR», «A из NIST, где есть» или «измерено» (`nb.XE2_LINES`, поле
+  `br`; обоснование — `docs/crm/lines_final.md`, п. 6.1);
 * **σ линии** = BR · σ(i → u) для всех i, для которых у Ванга есть данные;
 * **константы скоростей** ⟨σv⟩(Te) — максвелловское распределение, сетка `TE` (первая ячейка):
   для возбуждения уровня (k(i→u)) и для линии (BR·k(i→u)).
@@ -224,10 +226,19 @@ ref = reference.read_xlsx(XLSX)
 W = RUNS / "xe2_wang"
 tab = {(int(r["upper"]), int(r["lower"])): r for r in nb.read_csv(W / "xe2_A_branching.csv")}
 col = {"dbsr": "branching", "hybrid": "branching_hybrid"}      # см. nb.XE2_LINES, поле br
-lines = [dict(x, BR=float(tab[(x["upper"], x["lower"])][col[x["br"]]])) for x in nb.XE2_LINES]
+def br_of(x):
+    if x["br"] == "measured":                                   # измерено по спектрам (nb.XE2_BR_MEASURED)
+        return nb.XE2_BR_MEASURED[x["wl"]]["BR"]
+    return float(tab[(x["upper"], x["lower"])][col[x["br"]]])
+lines = [dict(x, BR=br_of(x)) for x in nb.XE2_LINES]
 for x in lines:
     init = sorted(i for (i, j) in ref.sigma if j == x["upper"])
-    print(f"{x['wl']:8.3f}  {x['upper']}->{x['lower']}  BR = {x['BR']:.4f} ({x['br']})  σ у Ванга из уровней: {init}")
+    r = tab.get((x["upper"], x["lower"]), {})
+    other = "  ".join(f"{k}={float(r[c]):.4f}" for k, c in col.items() if r.get(c))
+    m = nb.XE2_BR_MEASURED.get(x["wl"])
+    meas = f"  измерено={m['BR']:.4f} ({m['range'][0]:.4f}-{m['range'][1]:.4f})" if m else ""
+    print(f"{x['wl']:8.3f}  {x['upper']}->{x['lower']}  BR = {x['BR']:.4f} ({x['br']})   [{other}{meas}]"
+          f"  σ у Ванга из уровней: {init}")
 '''),
     code('''
 sig, lab, sheet = {}, {}, {}
@@ -278,7 +289,7 @@ for x in lines:
 reference.write_rates_xlsx(W / "xe2_k_excitation.xlsx", TEa, k_exc, lab_e,
                            note="<sigma v> (cm3/s), excitation i->u, sigma: Wang et al 2019 (CrossSectionsIon.xlsx), Maxwellian")
 reference.write_rates_xlsx(W / "xe2_k_line.xlsx", TEa, k_line, lab_l,
-                           note="BR * <sigma v> (cm3/s), line from u; BR: DBSR (notebook 01); sigma: Wang et al 2019")
+                           note="BR * <sigma v> (cm3/s), line from u; BR: see nb.XE2_LINES (DBSR / DBSR+NIST, notebook 01; or measured, docs/crm/branching_measured.csv); sigma: Wang et al 2019")
 print("->", W / "xe2_k_excitation.xlsx", W / "xe2_k_line.xlsx")
 for x in lines:
     k = k_line[(1, x["upper"], x["wl"])]

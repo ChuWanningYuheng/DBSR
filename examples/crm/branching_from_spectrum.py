@@ -50,6 +50,8 @@ def main(argv=None):
     ap.add_argument("--nist-dir", default="docs/crm")
     ap.add_argument("--curve", default="docs/crm/sensitivity_A3_curve.csv")
     ap.add_argument("--min-sn", type=float, default=5.0)
+    ap.add_argument("--lines", default=None,
+                    help="upper:line pairs (Wang numbers, nm), e.g. 101:483.025 (default: the selected lines)")
     ap.add_argument("--out", default="branching.csv")
     a = ap.parse_args(argv)
     from pydbsr import reference
@@ -133,7 +135,8 @@ def main(argv=None):
     trs = nb.read_csv(a.transitions)
     dbl = fit_doublet(w, I, 545.045, 545.090) if w[0] < 545 < w[-1] else None
     out = []
-    for U, LINE in LINES:
+    lines = [(int(u), float(x)) for u, x in (t.split(":") for t in a.lines.split(","))] if a.lines else LINES
+    for U, LINE in lines:
         rows = [r for r in trs if r["upper_no"] == str(U)]
         tot = sum(float(r["A_exp"]) for r in rows)
         seen, unseen, sat = [], 0.0, False
