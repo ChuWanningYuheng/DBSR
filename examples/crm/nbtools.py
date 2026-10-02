@@ -21,9 +21,9 @@ CM_PER_EV = 8065.544
 
 # Xe II lines for ne/Te (docs/crm/lines_final.md): wavelength (NIST, air), upper -> lower (Wang numbers)
 XE2_LINES = [
-    dict(wl=545.045, upper=44, lower=16, role="ne"),
-    dict(wl=545.090, upper=51, lower=24, role="Te"),
     dict(wl=561.667, upper=41, lower=15, role="ne"),
+    dict(wl=557.219, upper=42, lower=15, role="ne"),
+    dict(wl=545.090, upper=51, lower=24, role="Te"),
     dict(wl=543.896, upper=39, lower=13, role="Te"),
     dict(wl=553.107, upper=29, lower=7, role="Te"),
 ]
@@ -33,8 +33,8 @@ XE2_UPPERS = sorted({x["upper"] for x in XE2_LINES})
 XE2_VALIDATION_UPPERS = [25, 26, 29, 30, 31, 35, 37, 39, 40, 41, 42, 44, 46, 49, 51, 52, 53, 54, 56]
 # lines from the same upper level: their intensity ratio depends only on the A ratio (and on the
 # spectral sensitivity): a test of the computed A against the measured spectrum
-XE2_SAME_UPPER = [(545.045, 575.103), (545.045, 610.143), (545.090, 589.329), (545.090, 597.113),
-                  (561.667, 680.574), (553.107, 541.915)]
+XE2_SAME_UPPER = [(557.219, 577.639), (557.219, 651.283), (545.090, 589.329), (545.090, 597.113),
+                  (561.667, 680.574), (553.107, 541.915), (545.045, 575.103)]
 
 # Ba lines (docs/crm/lines_final.md); A: NIST ASD (all branches of the upper level known)
 BA_LINES = [

@@ -6,7 +6,7 @@
 
 | Ноутбук | Что считает | Время | Выход |
 |---|---|---|---|
-| [01_xe2_A_values](01_xe2_A_values.ipynb) | мишень Xe⁺ как у Ванга; A, gf, S всех E1-ветвей верхних уровней 29, 39, 41, 44, 51; ветвления; сравнение с NIST | см. lines_final.md, п. 4 | `xe2_wang/xe2_A_branching.xlsx/.csv`, `transitions_E1.csv` |
+| [01_xe2_A_values](01_xe2_A_values.ipynb) | мишень Xe⁺ как у Ванга; A, gf, S всех E1-ветвей верхних уровней 29, 39, 41, 42, 51; ветвления; сравнение с NIST | см. lines_final.md, п. 4 | `xe2_wang/xe2_A_branching.xlsx/.csv`, `transitions_E1.csv` |
 | [02_xe2_line_cross_sections](02_xe2_line_cross_sections.ipynb) | σ линий = σ(Ванг) × BR (из 01) для всех начальных уровней у Ванга; ⟨σv⟩(Te) | минуты | `xe2_line_sigma.xlsx`, `xe2_k_excitation.xlsx`, `xe2_k_line.xlsx` (+ .csv) |
 | [03_ba2](03_ba2.ipynb) | e + Ba⁺: σ всех возбуждений (17 состояний), σ линий 455.4 и 493.4 (BR из NIST), ⟨σv⟩(Te); проверки мишени | часы (сервер) | `ba2/sigma_ba2.xlsx`, `rates_ba2.xlsx`, `ba2_line_sigma.xlsx`, `ba2_k_line.xlsx` |
 | [04_ba1](04_ba1.ipynb) | e + Ba: σ линии 553.5 из 6s² (Fursa 1999 — готово; DBSR — проверка) и из 6s5d (DBSR), ⟨σv⟩(Te) | сутки (сервер, оценка) | `ba1/sigma_ba1.xlsx`, `rates_ba1.xlsx`, `ba1_line_sigma.xlsx`, `ba1_k_line.xlsx` |
@@ -29,11 +29,11 @@
 Из командной строки:
 ```bash
 python examples/crm/run_model.py --model xe2_wang --workdir RUNS/xe2_wang --levels CrossSectionsIon_3.xlsx \
-       --stage transitions --uppers 29,39,41,44,51
+       --stage transitions --uppers 29,39,41,42,51
 python examples/crm/run_model.py --model ba2 --workdir RUNS/ba2 --stage all --jmax 20 --cores 32 --mem 100 \
        --te 0.3,0.5,1,2,5,10
 python examples/crm/line_criteria.py --wang CrossSectionsIon_3.xlsx --spectrum A25_second.xlsx \
-       --wmin 541.647 --wmax 565 --extra 575.103,610.143,461.550,497.271 --out criteria.csv
+       --wmin 541.647 --wmax 565 --extra 575.103,610.143,461.550,497.271,589.329,597.113,680.574,577.639,651.283 --out criteria.csv
 ```
 
 Ноутбуки генерируются из [tools/make_atomic_data_notebooks.py](../../tools/make_atomic_data_notebooks.py).
