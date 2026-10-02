@@ -20,12 +20,16 @@ HERE = Path(__file__).resolve().parent
 CM_PER_EV = 8065.544
 
 # Xe II lines for ne/Te (docs/crm/lines_final.md): wavelength (NIST, air), upper -> lower (Wang numbers)
+# br: which branching ratio notebook 02 uses — "dbsr" (all A from DBSR) or "hybrid" (NIST A where
+# NIST has them, the other branches from DBSR); chosen by the check against the A3 spectrum
+# (docs/crm/lines_final.md, part 2): level 29 — NIST confirmed (541.915/553.107: 8.15 measured,
+# 7.05 NIST, 24.7 DBSR); level 41 — NIST A(680.574) not confirmed (2.37 measured, 0.74 NIST, 3.37 DBSR)
 XE2_LINES = [
-    dict(wl=561.667, upper=41, lower=15, role="ne"),
-    dict(wl=557.219, upper=42, lower=15, role="ne"),
-    dict(wl=545.090, upper=51, lower=24, role="Te"),
-    dict(wl=543.896, upper=39, lower=13, role="Te"),
-    dict(wl=553.107, upper=29, lower=7, role="Te"),
+    dict(wl=561.667, upper=41, lower=15, role="ne", br="dbsr"),
+    dict(wl=557.219, upper=42, lower=15, role="ne", br="hybrid"),
+    dict(wl=545.090, upper=51, lower=24, role="Te", br="dbsr"),
+    dict(wl=553.107, upper=29, lower=7, role="Te", br="hybrid"),
+    dict(wl=543.896, upper=39, lower=13, role="Te (запасная)", br="hybrid"),
 ]
 XE2_UPPERS = sorted({x["upper"] for x in XE2_LINES})
 # all 5p4 6p levels of Wang's table: their branches are computed too (seconds), to compare with
@@ -33,8 +37,10 @@ XE2_UPPERS = sorted({x["upper"] for x in XE2_LINES})
 XE2_VALIDATION_UPPERS = [25, 26, 29, 30, 31, 35, 37, 39, 40, 41, 42, 44, 46, 49, 51, 52, 53, 54, 56]
 # lines from the same upper level: their intensity ratio depends only on the A ratio (and on the
 # spectral sensitivity): a test of the computed A against the measured spectrum
-XE2_SAME_UPPER = [(557.219, 577.639), (557.219, 651.283), (545.090, 589.329), (545.090, 597.113),
-                  (561.667, 680.574), (553.107, 541.915), (545.045, 575.103)]
+XE2_SAME_UPPER = [(553.107, 541.915), (553.107, 571.961), (557.219, 577.639), (557.219, 526.044),
+                  (557.219, 651.283), (545.090, 597.113), (545.090, 589.329), (561.667, 600.892),
+                  (561.667, 463.330), (561.667, 680.574), (543.896, 590.513), (543.896, 630.086),
+                  (545.045, 575.103)]
 
 # Ba lines (docs/crm/lines_final.md); A: NIST ASD (all branches of the upper level known)
 BA_LINES = [

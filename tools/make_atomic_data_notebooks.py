@@ -75,7 +75,8 @@ notebook("01_xe2_A_values.ipynb", [
 
 **Проверки**: энергии; все A против NIST (21 линия); отношение калибровок скорость/длина;
 отношения A для линий с общим верхним уровнем против измеренных отношений интенсивностей
-(`docs/crm/criteria.csv`).
+(спектр A3, `docs/crm/criteria_A3.csv`). Ветвления выдаются в двух вариантах: только DBSR
+и «A из NIST там, где они есть, остальные ветви из DBSR».
 
 **Внимание**: в тестовом прогоне ветви уровня 44 (линия 545.045) противоречили спектру,
 поэтому 545.045 заменена на 557.219 (уровень 42). Для уровней 29, 39, 41, 42, 51 расчёт
@@ -124,11 +125,14 @@ for r in nb.read_csv(W / "transitions_E1.csv"):
                      wl_air_nm=nb.fnum(r["wl_air_nm"]), A_exp=float(r["A_exp"]), A_calc=float(r["A_calc"]),
                      gf=float(r["gf"]), S=float(r["S"]), vel_len=nb.fnum(r["gauge_ratio"]),
                      A_NIST=nistA.get((u, l))))
-tot = {}
+tot, tot_h = {}, {}
 for r in rows:
+    r["A_hybrid"] = r["A_NIST"] or r["A_exp"]            # NIST там, где есть, иначе DBSR
     tot[r["upper"]] = tot.get(r["upper"], 0) + r["A_exp"]
+    tot_h[r["upper"]] = tot_h.get(r["upper"], 0) + r["A_hybrid"]
 for r in rows:
-    r["branching"] = r["A_exp"] / tot[r["upper"]]
+    r["branching"] = r["A_exp"] / tot[r["upper"]]               # только DBSR
+    r["branching_hybrid"] = r["A_hybrid"] / tot_h[r["upper"]]   # A NIST, где известны
     r["tau_ns"] = 1e9 / tot[r["upper"]]
 rows.sort(key=lambda r: (r["upper"], -r["A_exp"]))
 cmp = np.array([(r["A_exp"], r["A_NIST"]) for r in rows if r["A_NIST"]])
@@ -147,30 +151,31 @@ for u in nb.XE2_UPPERS:
 ## Проверка по спектру: линии с общим верхним уровнем
 
 Отношение числа фотонов двух линий одного верхнего уровня равно отношению их A (CRM не
-нужна). Измеренные амплитуды — `docs/crm/criteria.csv` (лист data2, без калибровки
-спектральной чувствительности, насыщенные пропущены); для 545.045/545.090 — фит дублета
-(`criteria_doublet.csv`). Расхождение в разы при близких длинах волн означает, что A
-(и ветвление) этой линии в модели ненадёжны.
+нужна). Измеренные амплитуды — спектр A3 (`docs/crm/criteria_A3.csv`, лист `SHEET_CHECK`,
+выдержка 0.4 с: насыщенных линий нет); для 545.045/545.090 — фит дублета
+(`criteria_A3_doublet.csv`). Калибровки спектральной чувствительности нет, поэтому
+сравнивайте прежде всего линии, близкие по длине волны.
 """),
     code('''
-crit = {round(float(r["wl_nm"]), 3): r for r in nb.read_csv(NIST / "criteria.csv")}
-dbl = nb.read_csv(NIST / "criteria_doublet.csv")
-d2 = [d for d in dbl if d["sheet"] == "data2"][0]
+SHEET_CHECK = "data10"
+crit = {round(float(r["wl_nm"]), 3): r for r in nb.read_csv(NIST / "criteria_A3.csv") if r["ion"] == "XeII"}
+d2 = [d for d in nb.read_csv(NIST / "criteria_A3_doublet.csv") if d["sheet"] == SHEET_CHECK][0]
 meas = {545.045: float(d2["amp1"]), 545.090: float(d2["amp2"])}
 for wl, r in crit.items():
-    if r.get("data2_amp") and not r.get("data2_sat") and wl not in meas:
-        meas[wl] = float(r["data2_amp"])
-A_of = {}
-for x in nb.read_csv(NIST / "criteria.csv"):
+    if r.get(f"{SHEET_CHECK}_amp") and not r.get(f"{SHEET_CHECK}_sat") and wl not in meas:
+        meas[wl] = float(r[f"{SHEET_CHECK}_amp"])
+A_of, A_hyb = {}, {}
+for wl, x in crit.items():
     if x.get("upper_no") and x.get("lower_no"):
         k = (int(x["upper_no"]), int(x["lower_no"]))
-        a = [r["A_exp"] for r in rows if (r["upper"], r["lower"]) == k]
+        a = [r for r in rows if (r["upper"], r["lower"]) == k]
         if a:
-            A_of[round(float(x["wl_nm"]), 3)] = a[0]
+            A_of[wl], A_hyb[wl] = a[0]["A_exp"], a[0]["A_hybrid"]
+print(f"{'пара':>18s}  {'измерено':>9s}  {'DBSR':>8s}  {'NIST/DBSR':>9s}")
 for w1, w2 in nb.XE2_SAME_UPPER:
     if w1 in A_of and w2 in A_of:
         m = meas[w2] / meas[w1] if w1 in meas and w2 in meas else float("nan")
-        print(f"{w2}/{w1}:  A_DBSR ratio = {A_of[w2] / A_of[w1]:10.2f}   измеренное отношение амплитуд = {m:.2f}")
+        print(f"{w2:8.3f}/{w1:8.3f}  {m:9.2f}  {A_of[w2] / A_of[w1]:8.2f}  {A_hyb[w2] / A_hyb[w1]:9.2f}")
 '''),
     code('''
 import openpyxl
@@ -182,11 +187,13 @@ ws.append(list(rows[0]))
 for r in rows:
     ws.append(list(r.values()))
 ws2 = wb.create_sheet("selected lines")
-ws2.append(["wl_nm (NIST)", "upper", "lower", "role", "A_exp (DBSR)", "branching (DBSR)", "A_NIST"])
+ws2.append(["wl_nm (NIST)", "upper", "lower", "role", "A_exp (DBSR)", "branching (DBSR)", "A_NIST",
+            "branching (NIST A где есть, иначе DBSR)"])
 for x in nb.XE2_LINES:
     r = [r for r in rows if r["upper"] == x["upper"] and r["lower"] == x["lower"]]
     ws2.append([x["wl"], x["upper"], x["lower"], x["role"], r[0]["A_exp"] if r else None,
-                r[0]["branching"] if r else None, nistA.get((x["upper"], x["lower"]))])
+                r[0]["branching"] if r else None, nistA.get((x["upper"], x["lower"])),
+                r[0]["branching_hybrid"] if r else None])
 wb.save(W / "xe2_A_branching.xlsx")
 print("->", out, "и", W / "xe2_A_branching.xlsx")
 '''),
@@ -199,7 +206,8 @@ notebook("02_xe2_line_cross_sections.ipynb", [
 
 * **σ возбуждения** верхнего уровня u из уровня i — Wang et al (2019), CrossSectionsIon.xlsx
   (листы gs->6p, 6s->6p, 5d->6p; i = 1, 2 — 5p⁵ ²P₃/₂, ²P₁/₂; i ≥ 4 — 6s, 5d);
-* **ветвление** BR = A_line/ΣA — ноутбук 01 (`xe2_A_branching.csv`);
+* **ветвление** BR = A_line/ΣA — ноутбук 01 (`xe2_A_branching.csv`); для каждой линии
+  выбран вариант «только DBSR» или «A из NIST, где есть» (`nb.XE2_LINES`, поле `br`);
 * **σ линии** = BR · σ(i → u) для всех i, для которых у Ванга есть данные;
 * **константы скоростей** ⟨σv⟩(Te) — максвелловское распределение, сетка `TE` (первая ячейка):
   для возбуждения уровня (k(i→u)) и для линии (BR·k(i→u)).
@@ -214,11 +222,12 @@ Energy(eV) / Sigma(1E-16 cm^2), над столбцом σ — метка «i->u
     code('''
 ref = reference.read_xlsx(XLSX)
 W = RUNS / "xe2_wang"
-br = {(int(r["upper"]), int(r["lower"])): float(r["branching"]) for r in nb.read_csv(W / "xe2_A_branching.csv")}
-lines = [dict(x, BR=br[(x["upper"], x["lower"])]) for x in nb.XE2_LINES]
+tab = {(int(r["upper"]), int(r["lower"])): r for r in nb.read_csv(W / "xe2_A_branching.csv")}
+col = {"dbsr": "branching", "hybrid": "branching_hybrid"}      # см. nb.XE2_LINES, поле br
+lines = [dict(x, BR=float(tab[(x["upper"], x["lower"])][col[x["br"]]])) for x in nb.XE2_LINES]
 for x in lines:
     init = sorted(i for (i, j) in ref.sigma if j == x["upper"])
-    print(f"{x['wl']:8.3f}  {x['upper']}->{x['lower']}  BR = {x['BR']:.4f}  σ у Ванга из уровней: {init}")
+    print(f"{x['wl']:8.3f}  {x['upper']}->{x['lower']}  BR = {x['BR']:.4f} ({x['br']})  σ у Ванга из уровней: {init}")
 '''),
     code('''
 sig, lab, sheet = {}, {}, {}

@@ -36,6 +36,9 @@ python examples/crm/line_criteria.py --wang CrossSectionsIon_3.xlsx --spectrum A
        --wmin 541.647 --wmax 565 --extra 575.103,610.143,461.550,497.271,589.329,597.113,680.574,577.639,651.283 --out criteria.csv
 ```
 
+Таблицы критериев по спектру A3 (серия выдержек 1–0.25 с, без насыщения нужных линий):
+`docs/crm/criteria_A3.csv`, `criteria_A3_doublet.csv` (`line_criteria.py --spectrum A3.xlsx --wmin 300 --wmax 816`).
+
 Ноутбуки генерируются из [tools/make_atomic_data_notebooks.py](../../tools/make_atomic_data_notebooks.py).
 Если pydbsr установлен в режиме разработки (`pip install -e`), задайте `DBSR_BIN` (папка
 `.../site-packages/pydbsr/bin` с собранными программами).
