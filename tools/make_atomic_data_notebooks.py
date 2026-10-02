@@ -692,7 +692,7 @@ def k_pair(i, j):
 for x in nb.XE2_LINES:
     u = x["upper"]
     feed = sorted(((h, P[h][u]) for h in P if P[h].get(u, 0) > P_MIN and h in name), key=lambda t: -t[1])
-    print(f"\\n{x['wl']} нм, верхний уровень {u} {ref.label(u)}: питают {len(feed)} уровней")
+    print(f"\\n{x['wl']} нм, верхний уровень {u} {ref.label(u)}: питающих уровней {len(feed)}")
     for h, p in feed:
         prow.append(dict(upper=u, line_nm=x["wl"], h=h, h_label=ref.label(h), P=p))
         print(f"   {h:3d} {ref.label(h):34s} P = {p:.3f}")
