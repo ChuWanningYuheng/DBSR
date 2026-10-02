@@ -10,7 +10,7 @@ from typing import Callable, Sequence
 
 from . import io
 from .atoms import Ion
-from .runner import ResourcePool, _collect, _sandbox, run, run_partial_waves
+from .runner import DBSRError, ResourcePool, _collect, _sandbox, run, run_partial_waves
 from .structure import State, Target
 
 __all__ = ["Scattering"]
@@ -472,8 +472,23 @@ class Scattering:
                 shutil.copy(clean, sb / clean.name)
             try:
                 tb = step(sb, "dbsr_breit3", [], 1, 1.0, k)
-                tm = step(sb, "dbsr_mat3", self._mat_args(k), 1, d["mat_gb"], k)
-                th = step(sb, "dbsr_hd3", hd, hd_threads, d["hd_gb"], k)
+                tm = th = 0.0
+                for i, s_ovl in enumerate((None,) + S_OVL_RETRY):
+                    mat_args = self._mat_args(k) + ([] if s_ovl is None else [f"s_ovl={s_ovl}"])
+                    tm += step(sb, "dbsr_mat3", mat_args, 1, d["mat_gb"], k)
+                    try:
+                        th += step(sb, "dbsr_hd3", hd, hd_threads, d["hd_gb"], k)
+                        break
+                    except DBSRError as e:
+                        if "DPOTRF" not in str(e) or i == len(S_OVL_RETRY):
+                            raise
+                        # nearly linearly dependent channels whose pairwise overlaps are
+                        # below dbsr_mat3's threshold s_ovl: let it impose orthogonality
+                        # conditions for smaller overlaps too, starting from clean cfg.nnn
+                        self._log(f"  partial wave {k}: dbsr_hd3 overlap matrix singular (DPOTRF); "
+                                  f"repeating dbsr_mat3 with s_ovl={S_OVL_RETRY[i]}")
+                        if clean.exists():
+                            shutil.copy(clean, sb / clean.name)
                 d["times"] = (tb, tm, th)
                 if cleanup:
                     for f in (f"dbsr_mat.{k:03d}", f"int_bnk.{k:03d}"):
@@ -595,6 +610,10 @@ def read_dbound_tab(path) -> list[dict]:
                             E_bind=float(f[9]), target=int(f[10]), channel=int(f[11])))
     return out
 
+
+# thresholds for dbsr_mat3's channel-overlap check (default 0.75) tried in turn
+# when dbsr_hd3 finds the overlap matrix singular
+S_OVL_RETRY = (0.5, 0.3)
 
 _CSF_SHELL = re.compile(r"(.{5})\(\s*(\d+)\)")
 
