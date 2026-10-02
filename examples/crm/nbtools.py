@@ -158,6 +158,25 @@ def branching_from_csv(path, kind=None):
     return {u: {l: a / tot[u] for l, a in v.items()} for u, v in A.items()}, tot, A
 
 
+def cascade_prob(br):
+    """{h: {u: P}}: probability that a level h, decaying radiatively (branching ratios ``br`` from
+    :func:`branching_from_csv`), passes through level u on the way down (all paths, any number of
+    steps).  Energies decrease along a path, so there are no loops."""
+    memo: dict = {}
+
+    def go(h):
+        if h not in memo:
+            out: dict = {}
+            for low, b in br.get(h, {}).items():
+                out[low] = out.get(low, 0.0) + b
+                for u, p in go(low).items():
+                    out[u] = out.get(u, 0.0) + b * p
+            memo[h] = out
+        return memo[h]
+
+    return {h: go(h) for h in br}
+
+
 def line_sigma(ref, upper, br, lower_initial=1):
     """Direct emission cross section of a line: BR * sigma(initial -> upper) (Wang table)."""
     E, s = ref.sigma[(lower_initial, upper)]

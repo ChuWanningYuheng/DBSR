@@ -10,8 +10,10 @@
 | [02_xe2_line_cross_sections](02_xe2_line_cross_sections.ipynb) | σ линий = σ(Ванг) × BR (из 01) для всех начальных уровней у Ванга; ⟨σv⟩(Te) | минуты | `xe2_line_sigma.xlsx`, `xe2_k_excitation.xlsx`, `xe2_k_line.xlsx` (+ .csv) |
 | [03_ba2](03_ba2.ipynb) | e + Ba⁺: σ всех возбуждений (17 состояний), σ линий 455.4 и 493.4 (BR из NIST), ⟨σv⟩(Te); проверки мишени | часы (сервер) | `ba2/sigma_ba2.xlsx`, `rates_ba2.xlsx`, `ba2_line_sigma.xlsx`, `ba2_k_line.xlsx` |
 | [04_ba1](04_ba1.ipynb) | e + Ba: σ линии 553.5 из 6s² (Fursa 1999 — готово; DBSR — проверка) и из 6s5d (DBSR), ⟨σv⟩(Te) | сутки (сервер, оценка) | `ba1/sigma_ba1.xlsx`, `rates_ba1.xlsx`, `ba1_line_sigma.xlsx`, `ba1_k_line.xlsx` |
+| [05_xe2_wang_check](05_xe2_wang_check.ipynb) | свой расчёт рассеяния в модели Ванга: проверка σ Ванга; σ и k между основным, ²P₁/₂ и метастабилями; каскады в верхние уровни линий (P(h→u), k_casc) | сервер | `xe2_wang_full/check_vs_wang.csv`, `xe2_k_metastable.xlsx`, `xe2_cascade_P.csv`, `xe2_k_cascade.xlsx` |
+| [06_xe2_extended](06_xe2_extended.ipynb) | модель + 6d, 7p, 4f: устойчивость σ(1,2→u), каскады с новых уровней | сервер, дольше 05 | `xe2_ext/ext_vs_wang.csv`, `xe2_ext_cascade_P.csv`, `xe2_ext_k_cascade.xlsx` |
 
-Порядок: 01 → 02; 03 и 04 независимы.
+Порядок: 01 → 02; 05 → 06 (06 сравнивает с 05); 03 и 04 независимы.
 
 * Выбранные линии заданы в одном месте — `nbtools.py` (`XE2_LINES`, `BA_LINES`).
 * Сетка Te для констант скоростей — переменная `TE` в первой ячейке.
@@ -21,7 +23,7 @@
   столбцы — переходы (xlsx и csv).
 * Тяжёлые расчёты идут **отдельным процессом** `run_model.py` (`nb.Job(...).start()`): их не
   прерывает закрытие браузера или ядра; повторный `start()` продолжает с места остановки.
-* Модели мишеней — [models.py](models.py) (`xe2_wang`, `ba2`, `ba1`), без поляризации остова:
+* Модели мишеней — [models.py](models.py) (`xe2_wang`, `xe2_ext`, `ba2`, `ba1`), без поляризации остова:
   проверяйте энергии и A (ячейки «проверка» в ноутбуках), прежде чем доверять σ.
 * [line_criteria.py](line_criteria.py) — числа для выбора линий Xe II (видимость, бленды, порог,
   наклон k(Te), вклад метастабилей, тушение, полнота A в NIST).

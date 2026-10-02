@@ -504,3 +504,355 @@ reference.write_rates_xlsx(W / "ba1_k_line.xlsx", TEa, k_line, labs,
 print("->", W / "ba1_line_sigma.xlsx", W / "ba1_k_line.xlsx")
 '''),
 ])
+
+# ====================================================================== 05 Xe II: Wang model, own run
+COMMON_05_06 = '''
+TEa = np.array(TE)
+def k_of(E, s, thr_ev):
+    """Maxwellian <sigma v> (cm3/s) on the TE grid; tail above the last energy: 1/E."""
+    return rates.rates_on_grid(E, s, TEa, thr_ev)
+def show_k(title, k):
+    print(f"{title:28s} " + "  ".join(f"{v:9.2e}" for v in k))
+print(" " * 28 + "  ".join(f"Te={t:<6g}" for t in TEa))
+'''
+
+notebook("05_xe2_wang_check.ipynb", [
+    md("""
+# 05. Xe II: свой расчёт рассеяния в модели Ванга — проверка, метастабили, каскады
+
+Три вещи, которых нет в ноутбуке 02 (там σ берутся готовыми у Ванга):
+
+1. **Проверка σ Ванга.** Та же мишень (`models.xe2_wang`, 68 состояний, нумерация уровней —
+   таблица Ванга), свой расчёт DBSR. Сравниваются σ и ⟨σv⟩ для **всех** пар, которые есть у
+   Ванга (gs→6s/5d/6p, 6s→6p, 5d→6p). Это воспроизведение расчёта, а не другая физическая
+   модель: совпадение проверяет, что Ванг и мы посчитали одно и то же (сетка, число
+   парциальных волн, пороги). Зависимость от модели мишени — ноутбук 06.
+2. **Переходы между метастабилями** (и с ²P₁/₂): у Ванга их нет. Метастабиль здесь — уровень
+   ниже 6p, у которого время жизни по E1 (из этого же расчёта) длиннее `TAU_META` или
+   E1-распада нет вовсе. M1 и E2 не считаются (dbsr_dmat3 падает на M1), поэтому настоящие
+   времена жизни короче — проверьте по литературе, если важно.
+3. **Каскады в верхние уровни выбранных линий.** Для каждого уровня h выше u — вероятность
+   P(h→u), что h, распадаясь, пройдёт через u (все цепочки, ветвления DBSR E1). Константа
+   каскадного заселения из уровня i: k_casc(i→u) = Σ_h k(i→h)·P(h→u). Отношение
+   k_casc/k(i→u) — атомные данные (как σ_app у Fursa); как каскады войдут в заселённость, решает CRM.
+   В модели Ванга выше 6p есть только 5d и 7s (до 18.5 эВ); 6d, 7p, 4f — ноутбук 06.
+
+Все σ здесь — DBSR (этот расчёт); ветвления — DBSR E1 (этот расчёт).
+
+**Время**: J = 0 (2 волны) на 4 ядрах — см. `docs/crm/lines_final.md`; полный расчёт
+(J ≤ 25) — сервер. Сходимость по J проверьте (`JMAX` 15/20/25): у оптически разрешённых
+переходов (gs→6s, 5d) большие J вносят заметный вклад.
+
+**Выход** (папка `xe2_wang_full`): `sigma_xe2_wang.xlsx` (σ из начальных уровней Ванга,
+формат Ванга), `rates_xe2_wang.xlsx` (k всех возбуждений), `check_vs_wang.csv`,
+`xe2_levels_tau.csv`, `xe2_sigma_metastable.xlsx`, `xe2_k_metastable.xlsx`,
+`xe2_cascade_P.csv`, `xe2_k_cascade.xlsx` (+ .csv).
+"""),
+    code(PARAMS),
+    code('''
+import shutil
+JMAX, EMAX = 25, 60.0        # J: проверьте сходимость; EMAX (эВ): σ выше — хвост 1/E (как в 02)
+ref = reference.read_xlsx(XLSX)
+WANG_INITIAL = sorted({i for i, j in ref.sigma})         # 1, 2, 4, 5, ... 34
+W = RUNS / "xe2_wang_full"
+if (RUNS / "xe2_wang" / "target").exists() and not (W / "target").exists():
+    shutil.copytree(RUNS / "xe2_wang" / "target", W / "target")      # мишень из ноутбука 01
+job = nb.Job(W, "xe2_wang", levels=XLSX, stage="all", jmax=JMAX, cores=CORES, mem=MEM, hd_threads=HD_THREADS,
+             scratch=SCRATCH, scratch_gb=SCRATCH_GB, emax=EMAX, de=0.0136, multipoles="E1",
+             sigma_initial=",".join(map(str, WANG_INITIAL)), te=",".join(map(str, TE)))
+job.start()
+'''),
+    code(JOB_STATUS),
+    code('''
+cs = db.CollisionStrengths.load(W / f"omega_J{JMAX:g}.npz")
+tg = db.Target.load(W / "target")
+name = {s.nist_no: s.name for s in tg.states if s.nist_no and s.name in cs.names}   # номер Ванга -> состояние
+Ecm = {lv.no: lv.energy_cm for lv in ref.levels}
+def dbsr_sigma(i, j):
+    E, s = cs.incident_energy(name[i]), cs.sigma(name[i], name[j])
+    m = np.isfinite(s) & (E > 0)
+    return E[m], s[m]
+def thr(i, j):
+    return (Ecm[j] - Ecm[i]) / nb.CM_PER_EV
+'''
+         + COMMON_05_06),
+    md("""
+## 1. σ Ванга против своего расчёта
+
+Для каждой пары: k_DBSR/k_Ванг при каждом Te (обе константы — из σ одной и той же функцией
+`rates.rates_on_grid`, хвост 1/E). Сводка — медиана и доля пар в пределах ×1.5 и ×2.
+"""),
+    code('''
+import csv
+check = []
+for (i, j), (Ew, sw) in sorted(ref.sigma.items()):
+    if i in name and j in name:
+        kw = k_of(Ew, sw, thr(i, j))
+        kd = k_of(*dbsr_sigma(i, j), thr(i, j))
+        check.append(dict(i=i, j=j, label=f"{ref.label(i)} -> {ref.label(j)}",
+                          **{f"ratio_Te{t:g}": d / w for t, d, w in zip(TEa, kd, kw)}))
+for t in TEa:
+    q = np.array([c[f"ratio_Te{t:g}"] for c in check])
+    q = q[np.isfinite(q) & (q > 0)]
+    print(f"Te = {t:5g} эВ: {len(q)} пар, медиана DBSR/Ванг = {np.median(q):.2f}, "
+          f"в пределах ×1.5: {np.mean((q > 1 / 1.5) & (q < 1.5)):.0%}, ×2: {np.mean((q > 0.5) & (q < 2)):.0%}")
+with open(W / "check_vs_wang.csv", "w", newline="") as f:
+    w = csv.DictWriter(f, fieldnames=list(check[0])); w.writeheader(); w.writerows(check)
+print("->", W / "check_vs_wang.csv")
+print("\\nверхние уровни выбранных линий:")
+for c in check:
+    if c["j"] in nb.XE2_UPPERS:
+        print(f"{c['i']:3d} -> {c['j']:3d}  " + "  ".join(f"{c[f'ratio_Te{t:g}']:5.2f}" for t in TEa))
+'''),
+    code('''
+fig, axs = plt.subplots(2, len(nb.XE2_LINES), figsize=(4 * len(nb.XE2_LINES), 6.5), squeeze=False)
+for col, x in enumerate(nb.XE2_LINES):
+    u = x["upper"]
+    for row, i in enumerate((1, 2)):
+        ax = axs[row][col]
+        if (i, u) in ref.sigma:
+            E, s = ref.sigma[(i, u)]; ax.plot(E, s / 1e-16, "k", lw=0.8, label="Ванг 2019")
+        E, s = dbsr_sigma(i, u); ax.plot(E, s / 1e-16, "r", lw=0.6, label=f"DBSR, J ≤ {JMAX}")
+        ax.set_xscale("log"); ax.set_title(f"{i} → {u} ({x['wl']} нм)", fontsize=9)
+axs[0][0].legend(fontsize=7); fig.supxlabel("E, эВ"); fig.supylabel("σ, 10⁻¹⁶ см²"); fig.tight_layout(); plt.show()
+'''),
+    md("""
+## 2. Времена жизни (E1) и метастабили
+
+`TAU_META` — порог: уровни ниже 6p с τ(E1) длиннее него (или без E1-распада) считаются
+метастабилями. Уровень 2 (²P₁/₂) распадается только M1 — он всегда в списке.
+"""),
+    code('''
+TAU_META = 1e-6            # с
+br, tot, A = nb.branching_from_csv(W / "transitions_E1.csv")
+first6p = min(n for n in name if ")6p" in ref.label(n))
+low = [n for n in sorted(name) if Ecm[n] < Ecm[first6p]]
+META = [n for n in low if n > 1 and (n not in tot or 1 / tot[n] > TAU_META)]
+rows = []
+for n in sorted(name):
+    tau = 1 / tot[n] if n in tot else float("inf")
+    rows.append(dict(no=n, label=ref.label(n), E_eV=Ecm[n] / nb.CM_PER_EV, tau_E1_s=tau, metastable=n in META))
+    if n in low:
+        print(f"{n:3d} {ref.label(n):34s} {Ecm[n] / nb.CM_PER_EV:7.3f} эВ   τ(E1) = {tau:9.3g} с" + ("   метастабиль" if n in META else ""))
+with open(W / "xe2_levels_tau.csv", "w", newline="") as f:
+    w = csv.DictWriter(f, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
+print("метастабили:", META, " (начальные уровни у Ванга:", WANG_INITIAL, ")")
+'''),
+    md("""
+## 3. σ и ⟨σv⟩ между основным, ²P₁/₂ и метастабилями
+
+Набор M — 1, 2, метастабили и начальные уровни Ванга ниже 6p (у Ванга это и 6s/5d с
+τ ≈ 0.1–0.2 мкс, которые в плазме тоже заметно заселены). Только возбуждение i → j (E_i < E_j). Обратный процесс — детальное равновесие:
+`rates.deexcitation(k, g_i, g_j, ΔE, Te)`, g = 2J+1 (столбец J в «NIST Level Table»).
+Плюс k(i → u) из этих уровней в верхние уровни выбранных линий (у Ванга есть не все).
+"""),
+    code('''
+M = sorted({1, 2} | set(META) | {i for i in WANG_INITIAL if Ecm[i] < Ecm[first6p]})   # + начальные уровни Ванга ниже 6p
+sig_m, lab_m, k_m = {}, {}, {}
+for a_, i in enumerate(M):
+    for j in M[a_ + 1:] + [u for u in nb.XE2_UPPERS]:
+        if Ecm[j] <= Ecm[i] or (i, j) in sig_m:
+            continue
+        E, s = dbsr_sigma(i, j)
+        sig_m[(i, j)] = (E, s)
+        lab_m[(i, j)] = f"{i}->{j}" + ("" if (i, j) in ref.sigma or j not in nb.XE2_UPPERS else " (нет у Ванга)")
+        k_m[(i, j)] = k_of(E, s, thr(i, j))
+reference.write_xlsx(W / "xe2_sigma_metastable.xlsx", ref.levels, sig_m, sheet_of=lambda k: f"from {k[0]}", labels=lab_m)
+reference.write_rates_xlsx(W / "xe2_k_metastable.xlsx", TEa, k_m, lab_m,
+                           note=f"<sigma v> (cm3/s), excitation i->j, levels: Wang 2019 numbers; sigma: DBSR, model xe2_wang, J<={JMAX}")
+for key in sorted(k_m):
+    show_k(lab_m[key], k_m[key])
+'''),
+    md("""
+## 4. Каскады в верхние уровни выбранных линий
+
+P(h→u) — доля распадов h, проходящих через u (ветвления DBSR E1, все цепочки). Печатаются
+уровни с P > `P_MIN`. k_casc(i→u) = Σ_h k(i→h)·P(h→u); отношение к прямому k(i→u).
+"""),
+    code('''
+P_MIN = 1e-3
+P = nb.cascade_prob(br)
+prow, k_c, lab_c = [], {}, {}
+kcache = {}
+def k_pair(i, j):
+    if (i, j) not in kcache:
+        kcache[(i, j)] = k_of(*dbsr_sigma(i, j), thr(i, j))
+    return kcache[(i, j)]
+for x in nb.XE2_LINES:
+    u = x["upper"]
+    feed = sorted(((h, P[h][u]) for h in P if P[h].get(u, 0) > P_MIN and h in name), key=lambda t: -t[1])
+    print(f"\\n{x['wl']} нм, верхний уровень {u} {ref.label(u)}: питают {len(feed)} уровней")
+    for h, p in feed:
+        prow.append(dict(upper=u, line_nm=x["wl"], h=h, h_label=ref.label(h), P=p))
+        print(f"   {h:3d} {ref.label(h):34s} P = {p:.3f}")
+    for i in M:
+        if Ecm[i] >= Ecm[u]:
+            continue
+        kc = sum(k_pair(i, h) * p for h, p in feed if Ecm[h] > Ecm[i])
+        kd = k_pair(i, u)
+        k_c[(i, u, "casc")] = kc; lab_c[(i, u, "casc")] = f"{i}->{u} cascade"
+        k_c[(i, u, "ratio")] = kc / kd; lab_c[(i, u, "ratio")] = f"{i}->{u} cascade/direct"
+        if i in (1, 2):
+            show_k(f"  из {i}: k_casc/k_прям", kc / kd)
+with open(W / "xe2_cascade_P.csv", "w", newline="") as f:
+    w = csv.DictWriter(f, fieldnames=list(prow[0])); w.writeheader(); w.writerows(prow)
+reference.write_rates_xlsx(W / "xe2_k_cascade.xlsx", TEa, k_c, lab_c,
+                           note="cascade: sum_h <sigma v>(i->h) P(h->u), cm3/s; ratio = cascade/direct; DBSR, model xe2_wang")
+print("->", W / "xe2_cascade_P.csv", W / "xe2_k_cascade.xlsx")
+'''),
+])
+
+# ====================================================================== 06 Xe II: extended model
+notebook("06_xe2_extended.ipynb", [
+    md("""
+# 06. Xe II: расширенная модель (+ 6d, 7p, 4f) — каскады и устойчивость σ
+
+Модель `xe2_ext` (`models.py`): мишень Ванга + 5p⁴6d, 7p, 4f, корреляционная 7d, все уровни
+до 19.2 эВ (до (¹D₂)6d). Уровни — NIST ASD (таблица Ванга кончается на 18.6 эВ); номера
+переводятся в номера Ванга по энергии (`nb.level_number`, допуск 1 см⁻¹), у новых уровней
+номера Ванга нет.
+
+1. **Энергии и A** новых уровней против NIST.
+2. **Устойчивость σ**: σ(1→u), σ(2→u) для выбранных u — расширенная модель против модели
+   Ванга (ноутбук 05) и Ванга 2019. Разница — оценка неопределённости σ от выбора мишени.
+3. **Каскады** с учётом 6d (и цепочек 7p → 7s/6d → 6p, 4f → 5d → 6p): P(h→u), k_casc, отношение
+   к прямому k — как в 05; отдельно вклад уровней, которых нет в модели Ванга.
+
+Все σ — DBSR (этот расчёт); ветвления — DBSR E1 (этот расчёт).
+
+**Время**: состояний больше, чем в 05, — расчёт дольше (сервер). Сначала можно запустить
+`stage="transitions"` (минуты): пункты 1 и P(h→u) из пункта 3 считаются без рассеяния.
+
+**Выход** (папка `xe2_ext`): `sigma_xe2_ext.xlsx`, `rates_xe2_ext.xlsx` (номера NIST ASD),
+`ext_vs_wang.csv`, `xe2_ext_cascade_P.csv`, `xe2_ext_k_cascade.xlsx` (+ .csv).
+"""),
+    code(PARAMS),
+    code('''
+JMAX, EMAX = 25, 60.0
+STAGE = "all"                 # "transitions" — только структура (быстро)
+W = RUNS / "xe2_ext"
+job = nb.Job(W, "xe2_ext", stage=STAGE, jmax=JMAX, cores=CORES, mem=MEM, hd_threads=HD_THREADS,
+             scratch=SCRATCH, scratch_gb=SCRATCH_GB, emax=EMAX, de=0.0136, multipoles="E1",
+             sigma_initial="1,2", te=",".join(map(str, TE)))
+job.start()
+'''),
+    code(JOB_STATUS),
+    md("## 1. Энергии и номера Ванга"),
+    code('''
+print((W / "target_table.txt").read_text())
+ref = reference.read_xlsx(XLSX)
+elv = [lv.energy_cm for lv in ref.levels]
+tg = db.Target.load(W / "target")
+S = {s.nist_no: s for s in tg.states if s.nist_no}           # номер NIST ASD -> состояние
+wang = {n: nb.level_number(elv, s.exp_energy_cm, tol=1.0) for n, s in S.items()}
+Ecm = {n: s.exp_energy_cm for n, s in S.items()}
+lab = {n: s.nist_label or s.config for n, s in S.items()}
+of_wang = {w: n for n, w in wang.items() if w}
+new = [n for n in sorted(S) if not wang[n]]
+print(f"{len(S)} состояний; без номера Ванга (новые): {len(new)}")
+for n in new:
+    print(f"   ASD {n:3d}  {lab[n]:34s} {Ecm[n] / nb.CM_PER_EV:7.3f} эВ")
+'''),
+    md("## 2. A новых уровней против NIST"),
+    code('''
+nistA = [x for f in ("nist_XeII.csv", "nist_XeII_UV.csv", "nist_XeII_IR.csv") if (NIST / f).exists()
+         for x in nb.nist_lines(NIST / f) if x["A"]]
+q = []
+for r in nb.read_csv(W / "transitions_E1.csv"):
+    if not r["upper_no"] or not r["lower_no"]:
+        continue
+    u, l = int(r["upper_no"]), int(r["lower_no"])
+    hit = [x for x in nistA if x["Ek"] and x["Ei"] and abs(x["Ek"] - Ecm[u]) < 1 and abs(x["Ei"] - Ecm[l]) < 1]
+    if hit:
+        a = float(r["A_exp"]); q.append(a / hit[0]["A"])
+        if u in new:
+            print(f"{hit[0]['wl']:9.3f} {lab[u]:30s} -> {lab[l]:30s} DBSR {a:.2e}  NIST {hit[0]['A']:.2e}  {a / hit[0]['A']:.2f}")
+q = np.array(q)
+print(f"все линии с A в NIST: {len(q)}, медиана DBSR/NIST = {np.median(q):.2f}, в пределах ×2: {np.mean((q > 0.5) & (q < 2)):.0%}")
+'''),
+    md("""
+## 3. σ(1→u), σ(2→u): расширенная модель, модель Ванга (05), Ванг 2019
+
+k_ext/k_Ванг и k_ext/k_05 по Te. Если 05 не досчитан, его столбцы пропускаются.
+"""),
+    code('''
+import csv
+cs = db.CollisionStrengths.load(W / f"omega_J{JMAX:g}.npz")
+def ext_sigma(i, j):
+    E, s = cs.incident_energy(S[i].name), cs.sigma(S[i].name, S[j].name)
+    m = np.isfinite(s) & (E > 0)
+    return E[m], s[m]
+def thr(i, j):
+    return (Ecm[j] - Ecm[i]) / nb.CM_PER_EV
+f05 = RUNS / "xe2_wang_full" / f"omega_J{JMAX:g}.npz"
+cs05 = db.CollisionStrengths.load(f05) if f05.exists() else None
+if cs05:
+    tg05 = db.Target.load(RUNS / "xe2_wang_full" / "target")
+    n05 = {s.nist_no: s.name for s in tg05.states if s.nist_no and s.name in cs05.names}
+'''
+         + COMMON_05_06 + '''
+rows = []
+fig, axs = plt.subplots(2, len(nb.XE2_LINES), figsize=(4 * len(nb.XE2_LINES), 6.5), squeeze=False)
+for col, x in enumerate(nb.XE2_LINES):
+    u = of_wang[x["upper"]]
+    for row, i in enumerate((1, 2)):
+        ax = axs[row][col]
+        E, s = ext_sigma(i, u); ke = k_of(E, s, thr(i, u)); ax.plot(E, s / 1e-16, "r", lw=0.6, label="xe2_ext")
+        r = dict(i=i, upper_wang=x["upper"], line_nm=x["wl"])
+        if (i, x["upper"]) in ref.sigma:
+            Ew, sw = ref.sigma[(i, x["upper"])]; ax.plot(Ew, sw / 1e-16, "k", lw=0.8, label="Ванг 2019")
+            r.update({f"ext/Wang_Te{t:g}": v for t, v in zip(TEa, ke / k_of(Ew, sw, thr(i, u)))})
+        if cs05:
+            E5, s5 = cs05.incident_energy(n05[i]), cs05.sigma(n05[i], n05[x["upper"]])
+            m = np.isfinite(s5) & (E5 > 0); ax.plot(E5[m], s5[m] / 1e-16, "b", lw=0.6, label="05 (модель Ванга)")
+            r.update({f"ext/05_Te{t:g}": v for t, v in zip(TEa, ke / k_of(E5[m], s5[m], thr(i, u)))})
+        rows.append(r)
+        ax.set_xscale("log"); ax.set_title(f"{i} → {x['upper']} ({x['wl']} нм)", fontsize=9)
+axs[0][0].legend(fontsize=7); fig.supxlabel("E, эВ"); fig.supylabel("σ, 10⁻¹⁶ см²"); fig.tight_layout(); plt.show()
+keys = sorted({k for r in rows for k in r}, key=lambda k: (k not in ("i", "upper_wang", "line_nm"), k))
+with open(W / "ext_vs_wang.csv", "w", newline="") as f:
+    w = csv.DictWriter(f, fieldnames=keys); w.writeheader(); w.writerows(rows)
+for r in rows:
+    print(r["i"], "->", r["upper_wang"], "  ".join(f"{k}={v:.2f}" for k, v in r.items() if "Te" in k))
+'''),
+    md("""
+## 4. Каскады с 6d, 7p, 4f
+
+Как в 05, но по всем уровням расширенной модели. Колонка «новый» — уровня нет в модели
+Ванга; `share_new` — доля каскада от таких уровней.
+"""),
+    code('''
+P_MIN = 1e-3
+br, tot, A = nb.branching_from_csv(W / "transitions_E1.csv")
+P = nb.cascade_prob(br)
+kcache = {}
+def k_pair(i, j):
+    if (i, j) not in kcache:
+        kcache[(i, j)] = k_of(*ext_sigma(i, j), thr(i, j))
+    return kcache[(i, j)]
+prow, k_c, lab_c = [], {}, {}
+for x in nb.XE2_LINES:
+    u = of_wang[x["upper"]]
+    feed = sorted(((h, P[h][u]) for h in P if P[h].get(u, 0) > P_MIN and h in S), key=lambda t: -t[1])
+    print(f"\\n{x['wl']} нм, уровень Ванга {x['upper']} (ASD {u}): питают {len(feed)} уровней")
+    for h, p in feed:
+        prow.append(dict(upper_wang=x["upper"], upper_asd=u, line_nm=x["wl"], h_asd=h, h_wang=wang[h] or "",
+                         h_label=lab[h], new=h in new, P=p))
+        print(f"   ASD {h:3d} {lab[h]:34s} P = {p:.3f}" + ("   новый" if h in new else ""))
+    for i in (1, 2):
+        kc = sum(k_pair(i, h) * p for h, p in feed)
+        kn = sum(k_pair(i, h) * p for h, p in feed if h in new)
+        kd = k_pair(i, u)
+        for tag, v in (("casc", kc), ("ratio", kc / kd), ("share_new", kn / np.maximum(kc, 1e-300))):
+            k_c[(i, x["upper"], tag)] = v
+            lab_c[(i, x["upper"], tag)] = f"{i}->{x['upper']} " + {"casc": "cascade", "ratio": "cascade/direct",
+                                                                   "share_new": "share of new levels"}[tag]
+        show_k(f"  из {i}: k_casc/k_прям", kc / kd)
+        show_k(f"  из {i}: доля новых", kn / np.maximum(kc, 1e-300))
+with open(W / "xe2_ext_cascade_P.csv", "w", newline="") as f:
+    w = csv.DictWriter(f, fieldnames=list(prow[0])); w.writeheader(); w.writerows(prow)
+reference.write_rates_xlsx(W / "xe2_ext_k_cascade.xlsx", TEa, k_c, lab_c,
+                           note="cascade into Wang levels u: sum_h <sigma v>(i->h) P(h->u), cm3/s; DBSR, model xe2_ext")
+print("->", W / "xe2_ext_cascade_P.csv", W / "xe2_ext_k_cascade.xlsx")
+'''),
+])
