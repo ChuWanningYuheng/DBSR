@@ -55,7 +55,7 @@ else:
     # states are replaced by these; its orbitals remain the input)
     tg.add(["5s2 5p5", "5s2 5p4 6p"])
     tg.compute(jobs=min(args.cores, 6))
-db.nist.assign(tg.states, ref.levels)              # NIST energies and level numbers from the xlsx
+db.nist.assign(tg.states, ref.levels, method="config")  # NIST energies and level numbers from the xlsx
 tg.save()
 print(tg.table())
 states = [s for s in tg.states if s.nist_no is not None]

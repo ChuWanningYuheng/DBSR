@@ -5,6 +5,7 @@ assigned (thresholds), plus the states to use in the close-coupling run.
 
   xe2_wang  e + Xe+, as Wang et al (2019): 5s2 5p5, 5s 5p6, 5p4 5d, 6s, 7s, 6p
             (6d correlation orbital for the term dependence of 5d)
+  xe2_ext   e + Xe+, Wang model + 5p4 6d, 7p, 4f: cascades into the 6p levels
   ba2       e + Ba+: 6s, 5d, 7s, 6d, 8s, 7d | 6p, 7p, 4f, 5f
   ba1       e + Ba : 6s2, 6s5d, 5d2, 6p2, 6s7s, 6s6d | 6s6p, 5d6p, 6s7p, 6s4f
 
@@ -53,6 +54,20 @@ def xe2_wang(tdir, jobs=4, levels=None, corr=True, emax_ev=None):
         tg.add(["5s 5p6", "5s2 5p4 5d", "5s2 5p4 6s", "5s2 5p4 7s"],
                correlation=["5s2 5p4 6d"] if corr else None, mchf_max_it=150)
         tg.add(["5s2 5p5", "5s2 5p4 6p"])
+    return _finish(tg, levels or "Xe II", jobs, emax_ev)
+
+
+@model
+def xe2_ext(tdir, jobs=4, levels=None, corr=True, emax_ev=19.2):
+    """Wang model + 5p4 6d, 7p, 4f (cascades into 6p).  ``emax_ev`` = 19.2 keeps the
+    levels up to (1D2)6d; every state below is kept (close coupling must not skip
+    states in between).  Levels: NIST ASD (Wang's table stops at 18.6 eV)."""
+    tg, done = _load_or_new(tdir, db.Ion("Xe", 1), "[Kr]4d10", {"rmax": 50.0, "hmax": 0.5})
+    if not done:
+        tg.add("5s2 5p5")
+        tg.add(["5s 5p6", "5s2 5p4 5d", "5s2 5p4 6s", "5s2 5p4 7s", "5s2 5p4 6d"],
+               correlation=["5s2 5p4 7d"] if corr else None, mchf_max_it=150)
+        tg.add(["5s2 5p5", "5s2 5p4 6p", "5s2 5p4 7p", "5s2 5p4 4f"])
     return _finish(tg, levels or "Xe II", jobs, emax_ev)
 
 

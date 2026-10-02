@@ -36,7 +36,7 @@ tg.compute(jobs=4)          # dbsr_hf (LS -> jj) + splitting into J-states (jcfi
 # ---------------------------------------------------------------- NIST levels
 try:
     levels = db.nist.read_levels(args.nist) if args.nist else db.nist.fetch_levels(ion)
-    db.nist.assign(tg.states, levels)
+    db.nist.assign(tg.states, levels, method="config")
     use_exp = True
 except (OSError, RuntimeError) as e:                      # no internet or NIST unavailable
     warnings.warn(f"NIST not available ({e}); using computed thresholds")

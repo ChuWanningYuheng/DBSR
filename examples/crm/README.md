@@ -39,6 +39,11 @@ python examples/crm/line_criteria.py --wang CrossSectionsIon_3.xlsx --spectrum A
 Таблицы критериев по спектру A3 (серия выдержек 1–0.25 с, без насыщения нужных линий):
 `docs/crm/criteria_A3.csv`, `criteria_A3_doublet.csv` (`line_criteria.py --spectrum A3.xlsx --wmin 300 --wmax 816`).
 
+Чувствительность спектрометра без лампы (по линиям с общего верхнего уровня):
+[sensitivity_step_by_step.ipynb](sensitivity_step_by_step.ipynb) — тот же расчёт, что
+`sensitivity_no_lamp.py`, развёрнутый по шагам для самостоятельного повторения
+(результат — `docs/crm/sensitivity_A3_*.csv`).
+
 Ноутбуки генерируются из [tools/make_atomic_data_notebooks.py](../../tools/make_atomic_data_notebooks.py).
 Если pydbsr установлен в режиме разработки (`pip install -e`), задайте `DBSR_BIN` (папка
 `.../site-packages/pydbsr/bin` с собранными программами).

@@ -62,6 +62,10 @@ def main(argv=None):
     p.add_argument("--scratch-gb", type=float, default=None)
     p.add_argument("--emax", type=float, default=40.0, help="max electron energy above the ground state, eV")
     p.add_argument("--de", type=float, default=0.0136, help="energy step, eV")
+    p.add_argument("--sigma-initial", default="all",
+                   help="initial levels (NIST numbers, comma separated) written to sigma_<model>.xlsx; 'all' = every pair")
+    p.add_argument("--omega-pw", default="auto", choices=["auto", "yes", "no"],
+                   help="keep Omega of every partial wave (convergence checks); auto: only up to 40 states")
     p.add_argument("--te", default=TE_DEFAULT, help="Te grid for the rate coefficients, eV (comma separated)")
     p.add_argument("--multipoles", default="E1,E2",
                    help="radiative transitions (M1 is not used: dbsr_dmat3 stops with SIGSEGV for M1 on c-files)")
@@ -134,7 +138,8 @@ def main(argv=None):
     if "outer" in stages and not ofile.exists():
         log("outer region")
         energies = np.arange(0.005, a.emax, a.de)
-        cs = sc.outer().collision_strengths(energies, jobs=a.cores, per_partial_wave=True)
+        per_pw = a.omega_pw == "yes" or (a.omega_pw == "auto" and len(states) <= 40)
+        cs = sc.outer().collision_strengths(energies, jobs=a.cores, per_partial_wave=per_pw)
         cs.save(ofile)
         log(f"-> {ofile}")
 
@@ -142,8 +147,10 @@ def main(argv=None):
         cs = db.CollisionStrengths.load(ofile)
         lv, sig = excitation_sigma(cs, states)
         if "sigma" in stages:
-            out = reference.write_xlsx(wd / f"sigma_{a.model}.xlsx", lv, sig, sheet_of=lambda k: f"from {k[0]}")
-            log(f"{len(sig)} cross sections -> {out}")
+            keep = sig if a.sigma_initial == "all" else \
+                {k: v for k, v in sig.items() if k[0] in {int(x) for x in a.sigma_initial.split(",")}}
+            out = reference.write_xlsx(wd / f"sigma_{a.model}.xlsx", lv, keep, sheet_of=lambda k: f"from {k[0]}")
+            log(f"{len(keep)} cross sections -> {out}")
         if "rates" in stages:
             te = np.array([float(x) for x in a.te.split(",")])
             by = {s.nist_no: s.name for s in states}
