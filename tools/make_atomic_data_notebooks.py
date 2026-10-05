@@ -14,12 +14,14 @@ PARAMS = '''
 # ---------- параметры (поменяйте пути под себя)
 from pathlib import Path
 import sys
-REPO    = Path("/data/pydbsr_calc/DBSR_src")          # клон репозитория pydbsr
+ROOT    = Path("/data/files_Otdel120/pydbsr_calc")    # папка установки (большой диск)
+REPO    = ROOT / "pydbsr_src"                         # распакованный архив pydbsr (или клон репозитория)
 CRM     = REPO / "examples" / "crm"                   # nbtools.py, run_model.py, models.py
 NIST    = REPO / "docs" / "crm"                       # выгрузки NIST ASD (nist_*.csv)
-DATA    = Path("/data/pydbsr_calc/data")              # ваши файлы
+DATA    = ROOT                                        # ваши файлы
 XLSX    = DATA / "CrossSectionsIon_3.xlsx"            # Wang et al (2019), сечения e + Xe+
-RUNS    = Path("/data/pydbsr_calc/runs/crm")          # результаты расчётов (большой диск)
+RUNS    = ROOT / "runs" / "crm"                       # результаты расчётов (большой диск)
+XE2_RUN = ROOT / "runs" / "xe_plus_v2"                # готовый расчёт e + Xe+ (модель Ванга, J <= 25)
 SCRATCH, SCRATCH_GB = Path.home() / "pydbsr_tmp", 5   # временные файлы dbsr_mat (быстрый диск)
 CORES, MEM, HD_THREADS = 32, 100, 8                   # ядра, ГБ памяти, потоки диагонализации
 TE = [0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0, 20.0]   # сетка Te (эВ) для констант скоростей
@@ -394,6 +396,42 @@ reference.write_rates_xlsx(W / "ba2_k_line.xlsx", TEa, k_line, lab_l,
                            note="BR * <sigma v> (cm3/s); sigma: pydbsr model ba2 (this run); BR: NIST ASD")
 print("->", W / "ba2_line_sigma.xlsx", W / "ba2_k_line.xlsx")
 '''),
+    md("""
+## 5. Поправка на силу линии 6s → 6p (поляризация остова)
+
+Модель `ba2` без поляризации остова 5p⁶: сила линии S(6s→6p) получается больше
+экспериментальной (тест: в 1.3 раза; S из A NIST: S = A·g_u·λ³[Å]/2.026·10¹⁸). Возбуждение
+6s → 6p — дипольно разрешённое, при E ≫ порога σ ∝ S, и завышение S переходит в σ почти
+целиком. Ниже — отношение S_NIST/S_DBSR и вариант σ и k линий из 6s, умноженных на него
+(файлы `*_scaledS`). Это приближение (у порога недипольные вклады и резонансы так не
+масштабируются); какой вариант брать — решите по сравнению с экспериментом
+**Crandall, Phaneuf, Dunn, Phys. Rev. A 11, 1223 (1975)** (абсолютные σ 6s→6p, 7s, 6d)
+или другим расчётом. Различие вариантов — оценка неопределённости плотности Ba⁺.
+"""),
+    code('''
+ratio = {}
+for r in nb.read_csv(W / "transitions_E1.csv"):
+    if r["lower_nist"].startswith("6s") and r["upper_nist"].startswith("6p"):
+        wl = nb.fnum(r["wl_air_nm"])
+        A_n = [v for k, v in NIST_A.items() if wl and abs(k - wl) < 0.05]
+        if not A_n:
+            continue
+        g_u = int(r["upper_nist"].split("J=")[1].split("/")[0]) + 1
+        S_n = A_n[0] * g_u * (10 * wl) ** 3 / 2.026e18
+        ratio[r["upper_nist"]] = S_n / float(r["S"])
+        print(f"{r['upper_nist']:>14s} -> 6s  S_DBSR = {float(r['S']):.2f}  S_NIST = {S_n:.2f}"
+              f"  S_NIST/S_DBSR = {ratio[r['upper_nist']]:.3f}")
+sig_s, k_s = {}, {}
+for key in sig:
+    x = [y for y in nb.BA_LINES if abs(y["wl"] - key[2]) < 1e-3][0]
+    f = ratio.get(x["upper"], 1.0) if key[0] == 1 else 1.0      # только из основного 6s
+    sig_s[key] = (sig[key][0], f * sig[key][1])
+    k_s[key] = f * k_line[key]
+reference.write_xlsx(W / "ba2_line_sigma_scaledS.xlsx", lv, sig_s, sheet_of=lambda k: f"{k[2]:.3f}", labels=lab)
+reference.write_rates_xlsx(W / "ba2_k_line_scaledS.xlsx", TEa, k_s, lab_l,
+                           note="as ba2_k_line; from 6s scaled by S_NIST/S_DBSR of 6s-6p (no core polarisation in the model)")
+print("->", W / "ba2_line_sigma_scaledS.xlsx", W / "ba2_k_line_scaledS.xlsx")
+'''),
 ])
 
 # ====================================================================== 04 Ba I
@@ -554,7 +592,7 @@ notebook("05_xe2_wang_check.ipynb", [
 (J ≤ 25) — сервер. Сходимость по J проверьте (`JMAX` 15/20/25): у оптически разрешённых
 переходов (gs→6s, 5d) большие J вносят заметный вклад.
 
-**Выход** (папка `xe2_wang_full`): `sigma_xe2_wang.xlsx` (σ из начальных уровней Ванга,
+**Выход** (папка готового расчёта `runs/xe_plus_v2`, если он есть, иначе `runs/crm/xe2_wang_full`): `sigma_xe2_wang.xlsx` (σ из начальных уровней Ванга,
 формат Ванга), `rates_xe2_wang.xlsx` (k всех возбуждений), `check_vs_wang.csv`,
 `xe2_levels_tau.csv`, `xe2_sigma_metastable.xlsx`, `xe2_k_metastable.xlsx`,
 `xe2_cascade_P.csv`, `xe2_k_cascade.xlsx` (+ .csv).
@@ -566,7 +604,16 @@ JMAX, EMAX = 25, 60.0        # J: проверьте сходимость; EMAX 
 ref = reference.read_xlsx(XLSX)
 WANG_INITIAL = sorted({i for i, j in ref.sigma})         # 1, 2, 4, 5, ... 34
 W = RUNS / "xe2_wang_full"
-if (RUNS / "xe2_wang" / "target").exists() and not (W / "target").exists():
+if list((XE2_RUN / "scat").glob("h.[0-9][0-9][0-9]")):
+    # готовый расчёт xe_plus_v2 (examples/xe_plus_wang2019.ipynb) — та же модель, сетка энергий
+    # 0.0136 эВ до 60 эВ: рассеяние не пересчитывается, считаются только A, σ и k(Te)
+    W = XE2_RUN
+    om = sorted((W / "compare").glob(f"omega_J{JMAX:g}_E*.npz"))
+    if om and not (W / f"omega_J{JMAX:g}.npz").exists():
+        (W / f"omega_J{JMAX:g}.npz").symlink_to(om[0])
+    print("готовый расчёт:", W, "| парциальных волн:", len(list((W / "scat").glob("h.[0-9][0-9][0-9]"))),
+          "| Ω:", (W / f"omega_J{JMAX:g}.npz").resolve())
+elif (RUNS / "xe2_wang" / "target").exists() and not (W / "target").exists():
     shutil.copytree(RUNS / "xe2_wang" / "target", W / "target")      # мишень из ноутбука 01
 job = nb.Job(W, "xe2_wang", levels=XLSX, stage="all", jmax=JMAX, cores=CORES, mem=MEM, hd_threads=HD_THREADS,
              scratch=SCRATCH, scratch_gb=SCRATCH_GB, emax=EMAX, de=0.0136, multipoles="E1",
@@ -795,10 +842,11 @@ def ext_sigma(i, j):
     return E[m], s[m]
 def thr(i, j):
     return (Ecm[j] - Ecm[i]) / nb.CM_PER_EV
-f05 = RUNS / "xe2_wang_full" / f"omega_J{JMAX:g}.npz"
+W05 = XE2_RUN if (XE2_RUN / f"omega_J{JMAX:g}.npz").exists() else RUNS / "xe2_wang_full"   # результат ноутбука 05
+f05 = W05 / f"omega_J{JMAX:g}.npz"
 cs05 = db.CollisionStrengths.load(f05) if f05.exists() else None
 if cs05:
-    tg05 = db.Target.load(RUNS / "xe2_wang_full" / "target")
+    tg05 = db.Target.load(W05 / "target")
     n05 = {s.nist_no: s.name for s in tg05.states if s.nist_no and s.name in cs05.names}
 '''
          + COMMON_05_06 + '''

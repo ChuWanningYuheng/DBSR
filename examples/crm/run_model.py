@@ -83,9 +83,14 @@ def main(argv=None):
         kw["emax_ev"] = a.emax_states
     log(f"model {a.model}: target")
     tg, states = MODELS[a.model](wd / "target", **kw)
+    done = wd / "scat" / "pydbsr_scattering.json"
+    if done.exists():        # existing scattering run: its own states (the level labels may be updated)
+        import json
+        by_name = {s.name: s for s in tg.states}
+        states = [by_name[d["name"]] for d in json.loads(done.read_text())["states"]]
     (wd / "target_table.txt").write_text(tg.table(states))
     log(f"{len(states)} states with NIST levels (of {len(tg.states)})")
-    by_no = {s.nist_no: s for s in states}
+    by_no = {s.nist_no: s for s in states if s.nist_no is not None}
 
     if "transitions" in stages:
         for kind in a.multipoles.split(","):
@@ -96,7 +101,7 @@ def main(argv=None):
             if a.uppers:
                 ups = [by_no[int(u)] for u in a.uppers.split(",")]
                 pairs = [(s.name, u.name) for u in ups for s in states
-                         if s.name != u.name and s.exp_energy_cm < u.exp_energy_cm]
+                         if s.name != u.name and s.exp_energy_cm is not None and s.exp_energy_cm < u.exp_energy_cm]
             log(f"transitions {kind}" + (f" from levels {a.uppers}" if a.uppers else ""))
             tr = transitions(tg, states, kinds=(kind,), pairs=pairs, jobs=a.cores, workdir=wd / "_transitions",
                              progress=log)
@@ -164,7 +169,7 @@ def main(argv=None):
 
 def excitation_sigma(cs, states):
     """Level table + {(i, j): (E_incident, sigma)} for all excitations i -> j (NIST numbers)."""
-    st = sorted((s for s in states if s.name in cs.names), key=lambda s: s.exp_energy_cm)
+    st = sorted((s for s in states if s.name in cs.names and s.nist_no is not None), key=lambda s: s.exp_energy_cm)
     lv = []
     for s in st:
         conf, term = s.config, ""

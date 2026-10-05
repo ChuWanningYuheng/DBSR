@@ -59,6 +59,12 @@ db.nist.assign(tg.states, ref.levels, method="config")  # NIST energies and leve
 tg.save()
 print(tg.table())
 states = [s for s in tg.states if s.nist_no is not None]
+done = wd / "scat" / "pydbsr_scattering.json"
+if done.exists():         # existing run: the same target states, only the NIST labels may be updated
+    import json
+    names = [d["name"] for d in json.loads(done.read_text())["states"]]
+    by_name = {s.name: s for s in tg.states}
+    states = [by_name[n] for n in names]
 
 # ---------------------------------------------------------------- inner region, streamed
 sdir = wd / "scat"
