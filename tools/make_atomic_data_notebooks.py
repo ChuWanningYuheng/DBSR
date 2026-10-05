@@ -405,7 +405,7 @@ print("->", W / "ba2_line_sigma.xlsx", W / "ba2_k_line.xlsx")
 целиком. Ниже — отношение S_NIST/S_DBSR и вариант σ и k линий из 6s, умноженных на него
 (файлы `*_scaledS`). Это приближение (у порога недипольные вклады и резонансы так не
 масштабируются); какой вариант брать — решите по сравнению с экспериментом
-**Crandall, Phaneuf, Dunn, Phys. Rev. A 11, 1223 (1975)** (абсолютные σ 6s→6p, 7s, 6d)
+**Pace, Hooper, Phys. Rev. A 7, 2033 (1973)**, doi:10.1103/PhysRevA.7.2033 — «Absolute Experimental Cross Sections for the Excitation of Barium Ions by Electron Impact» (абсолютные σ возбуждения Ba⁺)
 или другим расчётом. Различие вариантов — оценка неопределённости плотности Ba⁺.
 """),
     code('''
