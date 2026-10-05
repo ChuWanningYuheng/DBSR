@@ -254,7 +254,8 @@ def fursa(name):
 # photons of the line per collision = direct excitation of 6p x branching + cascades (6d, 7s -> 6p),
 # not corrected for cascades.  Table X: 455.4 nm (6p 2P3/2 -> 6s), at and below 8 eV absolute, above
 # 8 eV relative data of Bacon (1969) normalised at 8 eV.  Table XI: 493.4 nm (6p 2P1/2 -> 6s), relative
-# data of Bacon normalised to Table X.  err: total uncertainty, % (upper bound where asymmetric).
+# data of Bacon normalised to Table X.  err: total uncertainty, % (upper bound where asymmetric),
+# without the absolute calibration of the optics (their Table II).
 PACE_HOOPER = {
     455.403: dict(E=np.array([3, 4, 6, 8, 18, 28, 38, 48, 58, 68, 78, 88, 98.0]),
                   sigma=np.array([41.2, 28.9, 18.3, 15.8, 11.6, 9.5, 8.2, 7.3, 6.7, 5.9, 5.5, 5.0, 4.5]),

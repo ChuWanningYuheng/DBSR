@@ -428,6 +428,11 @@ class Scattering:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         wd = self.workdir.resolve()
+        if not (wd / "cfg_conf3").exists() and list(wd.glob("cfg.[0-9][0-9][0-9]")):
+            # run prepared by an older pydbsr: keep the current cfg.nnn as the reference for the retries
+            # (if a failed dbsr_mat3 attempt already changed them, rerun run_conf() first)
+            self._log("cfg_conf3/ missing: saving the current cfg.nnn (rerun run_conf() if attempts failed before)")
+            self._save_cfg()
         pool = ResourcePool(cores, mem_gb)
         sizes = sorted(self.wave_sizes(), key=lambda d: -d["khm"])
         hd = [f"itype={itype}"]

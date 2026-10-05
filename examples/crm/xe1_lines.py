@@ -3,7 +3,7 @@ ne/Te diagnostic from the neutral atom, whose atomic data are better known than 
 
 For every Xe I line of NIST ASD (docs/crm/nist_XeI.csv) inside the spectrum it reports the
 Gaussian fit in each sheet (amplitude, S/N, saturation; the wavelength error of the stitched
-spectrum is measured locally on strong isolated Xe I/II lines), the Paschen labels of the levels
+spectrum is measured locally on clean isolated Xe I/II lines), the Paschen labels of the levels
 (5p5 6s = 1s5..1s2, 5p5 6p = 2p10..2p1 in order of decreasing energy) and lines of the other
 species (Xe I/II/III, Ba I/II, W, Ca, Al) within +-1.5 FWHM.
 
@@ -63,32 +63,35 @@ def paschen(lines):
     return lab
 
 
-def calibration(w, I, refs, isolation=0.3, half=12.0):
-    """Wavelength error of the stitched spectrum near each wavelength (nm): the spectrum is
-    made of ~25 nm pieces, each with its own scale error (-30 ... -190 pm in these spectra).
-    Measured on strong isolated lines ``refs`` (NIST wavelengths): the highest point within
-    [wl - 0.25, wl + 0.05]; returns a function wl -> median error of the reference lines
-    within +-``half`` nm (global median where there are none)."""
-    refs = sorted(refs)
+def calibration(w, I, refs, half=10.0):
+    """Wavelength error of the stitched spectrum (nm) near a wavelength: the spectrum is made of
+    ~25 nm pieces with their own scale errors (-20 ... -100 pm and more), and the joins cannot
+    be found from the wavelength column of the full-range sheets (its step jitters by rounding).
+    Measured on the reference lines ``refs`` (NIST wavelengths of lines with no other Xe/Ba line
+    within 0.25 nm, so a wide search window cannot catch a neighbour): Gaussian fit in
+    [wl - 0.22, wl + 0.03], kept if S/N > 200, not saturated, instrument width.  Returns
+    wl -> median error (outliers dropped) of >= 3 references within +-``half`` nm, widened if needed."""
     pts = []
-    for k, wl in enumerate(refs):
-        if (k and wl - refs[k - 1] < isolation) or (k + 1 < len(refs) and refs[k + 1] - wl < isolation):
+    for wl in refs:
+        if not w[0] + 1 < wl < w[-1] - 1:
             continue
-        m = (w > wl - 0.25) & (w < wl + 0.05)
-        if m.sum() < 5:
-            continue
-        j = np.flatnonzero(m)[np.argmax(I[m])]
-        bg = np.percentile(I[(w > wl - 1.0) & (w < wl + 1.0)], 25)
-        if I[j] > 5 * bg:
-            pts.append((wl, w[j] - wl))
+        f = fit_line(w, I, wl, shift=(-0.22, 0.03))
+        if f and np.isfinite(f["sn"]) and f["sn"] > 200 and not f["saturated"] and 0.7 * FWHM < f["fwhm"] < 1.4 * FWHM:
+            pts.append((wl, f["centre"] - wl))
     if not pts:
-        return lambda wl: -0.06
+        return lambda lam: -0.06
     x, d = np.array(pts).T
     glob = float(np.median(d))
 
-    def shift(wl):
-        near = np.abs(x - wl) < half
-        return float(np.median(d[near])) if near.sum() >= 2 else glob
+    def shift(lam):
+        for h in (half, 2 * half, 4 * half):             # widen until >= 3 references
+            near = np.abs(x - lam) < h
+            if near.sum() >= 3:
+                v = d[near]
+                med = np.median(v)
+                ok = np.abs(v - med) < max(0.02, 2.5 * 1.4826 * np.median(np.abs(v - med)))   # drop outliers
+                return float(np.median(v[ok]))
+        return glob
     return shift
 
 
@@ -109,10 +112,11 @@ def main(argv=None):
         if f.exists():
             others += read_nist(f, sp)
     sheets = read_sheets(a.spectrum)
-    # reference lines for the wavelength scale: strong Xe I and Xe II lines with A in NIST
-    xe_all = [o for o in others if o["sp"] in ("XeI", "XeII")]
-    refs = [o["wl"] for o in xe_all if o["A"] and o["A"] > 5e6
-            and not any(abs(p["wl"] - o["wl"]) < 0.3 and p is not o for p in others)]
+    # reference lines for the wavelength scale: Xe I and Xe II lines with no other Xe or Ba line within
+    # 0.3 nm (W, Ca, Al are not seen in these spectra); calibration() keeps the strong unsaturated ones
+    seen = [o for o in others if o["sp"] in ("XeI", "XeII", "XeIII", "BaI", "BaII")]
+    refs = [o["wl"] for o in seen if o["sp"] in ("XeI", "XeII")
+            and not any(abs(p["wl"] - o["wl"]) < 0.25 and p is not o for p in seen)]
     calib = {name: calibration(w, I, refs) for name, (w, I) in sheets.items()}
     rows = []
     for x in sorted(xe1, key=lambda x: x["wl"]):
@@ -132,8 +136,9 @@ def main(argv=None):
             continue
         near = [o for o in others if abs(o["wl"] - x["wl"]) < 1.5 * FWHM
                 and not (o["sp"] == "XeI" and abs(o["wl"] - x["wl"]) < 1e-4)]
-        pl = f"{lab.get(round(x['Ek'], 2), '')}-{lab.get(round(x['Ei'], 2), '')}" if x["Ek"] and x["Ei"] else ""
-        rows.append(dict(wl_nm=x["wl"], paschen=pl.strip("-"), upper=x["upper"], lower=x["lower"],
+        lu, ll = (lab.get(round(x["Ek"], 2)), lab.get(round(x["Ei"], 2))) if x["Ek"] and x["Ei"] else (None, None)
+        pl = f"{lu}-{ll}" if (lu and ll) else ""           # only when both levels have Paschen names
+        rows.append(dict(wl_nm=x["wl"], paschen=pl, upper=x["upper"], lower=x["lower"],
                          E_upper_eV=round(x["Ek"] / 8065.544, 3) if x["Ek"] else None,
                          A_nist=x["A"], acc=x["acc"], best_sn=round(best["sn"]), best_amp=round(best["amp"]),
                          n_sheets=len(res), n_saturated=sum(r["saturated"] for r in res.values()),

@@ -31,7 +31,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pydbsr as db                      # noqa: E402
-from pydbsr import reference             # noqa: E402
+from pydbsr import rates, reference      # noqa: E402
 from pydbsr.nist import Level            # noqa: E402
 from pydbsr.transitions import TransitionTable, transitions  # noqa: E402
 from models import MODELS                # noqa: E402
@@ -122,6 +122,8 @@ def main(argv=None):
                 sc.prepare()
                 sc.run_prep()
                 sc.run_conf()
+            elif not (sdir / "cfg_conf3").exists() and len(list(sdir.glob("h.[0-9][0-9][0-9]"))) < len(pw):
+                sc.run_conf()                # run made by older pydbsr with waves to do: clean cfg.nnn first
             sc.complete_target_orb()
             log(f"{len(pw)} partial waves, J <= {a.jmax:g}")
             itype = -1 if "bound" in stages else 0
@@ -158,11 +160,19 @@ def main(argv=None):
             log(f"{len(keep)} cross sections -> {out}")
         if "rates" in stages:
             te = np.array([float(x) for x in a.te.split(",")])
-            by = {s.nist_no: s.name for s in states}
-            k = {key: cs.rate(by[key[0]], by[key[1]], te * K_PER_EV) for key in sig}
+            by_no_st = {s.nist_no: s for s in states}
+
+            def e1(i, j):                      # E1-allowed pair: dipole tail of sigma above the grid
+                a_, b_ = by_no_st[i], by_no_st[j]
+                return a_.parity != b_.parity and abs(a_.two_j - b_.two_j) <= 2 and a_.two_j + b_.two_j > 0
+            # <sigma v> from the cross sections with a tail above the computed grid (as notebooks 02, 05);
+            # cs.rate integrates Upsilon over the grid only and is too low at high Te
+            k = {key: rates.rates_on_grid(E, s_, te, (by_no_st[key[1]].exp_energy_cm - by_no_st[key[0]].exp_energy_cm)
+                                          / 8065.544, tail="dipole" if e1(*key) else "1/E")
+                 for key, (E, s_) in sig.items()}
             out = reference.write_rates_xlsx(wd / f"rates_{a.model}.xlsx", te, k,
                                              note=f"{a.model}: Maxwellian <sigma v> (cm3/s), excitation i->j "
-                                                  f"(NIST numbers), from Upsilon of {ofile.name}")
+                                                  f"(NIST numbers), from sigma of {ofile.name} (tail above the grid: ln E/E E1, 1/E other)")
             log(f"rates -> {out}")
     log("done")
 

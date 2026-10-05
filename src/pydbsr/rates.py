@@ -19,7 +19,7 @@ V_EV = 5.930969e7            # electron speed (cm/s) = V_EV * sqrt(E/eV)
 
 def rate_from_sigma(E_eV, sigma_cm2, Te_eV: float | None = None, threshold_eV: float | None = None,
                     eedf: Callable | None = None, ion: bool = True, tail: str = "1/E",
-                    emax_Te: float = 60.0, n: int = 6000) -> float:
+                    emax_Te: float = 60.0, n: int = 20000) -> float:
     """<sigma v> (cm3/s) from a tabulated cross section.
 
     ``E_eV`` incident energy above the initial level, ``sigma_cm2``.
