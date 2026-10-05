@@ -762,6 +762,80 @@ for key in sorted(k_m):
     show_k(lab_m[key], k_m[key])
 '''),
     md("""
+## 3б. Проверка через силы линий (gf): какому набору σ из метастабилей верить
+
+Возбуждение m → u (m — уровень 6s/5d, u — 6p) и излучение u → m — один и тот же переход.
+Для разрешённого перехода σ(m→u) примерно пропорционально его силе линии (gf ∝ A):
+при больших энергиях строго, у порога — приближённо. Наш расчёт даёт gf всех таких
+переходов, NIST — для части из них. Если наш A(u→m) больше NIST в X раз, то и наше
+σ(m→u), вероятно, завышено примерно в X раз.
+
+Столбцы:
+* `наш/NIST` — наш A против NIST (нет в NIST — пусто);
+* `наш/изм.` — наш A против измеренного по вашим спектрам: (доля ветви по DBSR) / (измеренная
+  доля), медиана по всем спектрам `docs/crm/branching/` (только верхние уровни ваших линий
+  и видимые ветви). Где есть оба, верим спектру (для 680.57 нм спектр противоречит NIST);
+* `vel/len` — согласие двух форм нашего расчёта (далеко от 1 — линии не верим);
+* `k_наш/k_Ванг` — при `TE_CHECK` из раздела 1;
+* `исправл./Ванг` — k_наш × (A_истинное/A_наш) / k_Ванг: если близко к 1, расхождение с Вангом
+  объясняется силой линии в нашей модели, и правее Ванг; если далеко от 1 — дело не в A.
+"""),
+    code('''
+TE_CHECK = 1.0                        # эВ
+lines_nist = nb.nist_lines(NIST / "nist_XeII.csv")
+nos = sorted(Ecm, key=Ecm.get)        # номера уровней Ванга по возрастанию энергии
+E_sorted = [Ecm[n] for n in nos]
+A_nist = {}
+for x in lines_nist:
+    if not x["A"] or x["Ei"] is None or x["Ek"] is None:
+        continue
+    lo = nb.level_number(E_sorted, x["Ei"], tol=1.0)
+    up = nb.level_number(E_sorted, x["Ek"], tol=1.0)
+    if lo and up:
+        A_nist[(nos[up - 1], nos[lo - 1])] = x["A"]
+A_our, gauge = {}, {}
+for r in nb.read_csv(W / "transitions_E1.csv"):
+    if r["upper_no"] and r["lower_no"]:
+        key = (int(r["upper_no"]), int(r["lower_no"]))
+        A_our[key] = nb.fnum(r["A_exp"])
+        gauge[key] = nb.fnum(r["gauge_ratio"])
+# измерено по спектрам (examples/crm/branching_from_spectrum.py): доля ветви среди видимых × (1 − доля
+# невидимых по DBSR, строка «ИТОГ») = измеренное ветвление; / ветвление DBSR ≈ A_истинное / A_наш
+meas = {}
+for fcsv in sorted((NIST / "branching").glob("branching_*.csv")):
+    rs = nb.read_csv(fcsv)
+    unseen = {r["upper"]: nb.fnum(r["unseen_dbsr"]) for r in rs if r["branch_nm"] == "ИТОГ"}
+    for r in rs:
+        share, bd = nb.fnum(r["share_of_seen"]), nb.fnum(r["BR_dbsr"])
+        if share and bd and r["lower"].strip().isdigit() and unseen.get(r["upper"]) is not None:
+            meas.setdefault((int(r["upper"]), int(r["lower"])), []).append(share * (1 - unseen[r["upper"]]) / bd)
+meas = {k: float(np.median(v)) for k, v in meas.items()}
+ck = {(c["i"], c["j"]): c for c in check}
+rows = []
+print(f"{'m->u':>8s}  {'λ, нм':>8s}  {'A_наш':>9s}  {'A_NIST':>9s}  {'наш/NIST':>8s}  {'наш/изм.':>8s}  {'vel/len':>7s}"
+      f"  {'k_наш/k_Ванг':>12s}  {'исправл./Ванг':>13s}")
+for u in nb.XE2_UPPERS:
+    for m in sorted(M):
+        if (u, m) not in A_our or Ecm[m] >= Ecm[u]:
+            continue
+        a, an = A_our[(u, m)], A_nist.get((u, m))
+        mr = meas.get((u, m))                          # A_истинное / A_наш по спектру
+        kr = ck.get((m, u), {}).get(f"ratio_Te{TE_CHECK:g}")
+        true_over_our = mr if mr else (an / a if (an and a) else None)   # спектр важнее NIST
+        fix = kr * true_over_our if (kr and true_over_our) else None
+        wl = 1e7 / (Ecm[u] - Ecm[m]) / 1.000277
+        rows.append(dict(m=m, u=u, wl_nm=wl, A_our=a, A_NIST=an, our_NIST=a / an if an else None,
+                         our_measured=1 / mr if mr else None,
+                         vel_len=gauge.get((u, m)), k_our_Wang=kr, corrected_Wang=fix))
+        f = lambda v, fmt: format(v, fmt) if v is not None else "—"
+        print(f"{m:3d}->{u:<3d}  {wl:8.3f}  {a:9.2e}  {f(an, '9.2e'):>9s}  {f(a / an if an else None, '8.2f'):>8s}"
+              f"  {f(1 / mr if mr else None, '8.2f'):>8s}"
+              f"  {f(gauge.get((u, m)), '7.2f'):>7s}  {f(kr, '12.2f'):>12s}  {f(fix, '13.2f'):>13s}")
+with open(W / "xe2_gf_check.csv", "w", newline="") as fh:
+    wr = csv.DictWriter(fh, fieldnames=list(rows[0])); wr.writeheader(); wr.writerows(rows)
+print("->", W / "xe2_gf_check.csv")
+'''),
+    md("""
 ## 4. Каскады в верхние уровни выбранных линий
 
 P(h→u) — доля распадов h, проходящих через u (ветвления DBSR E1, все цепочки). Печатаются
