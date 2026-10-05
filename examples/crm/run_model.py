@@ -149,7 +149,7 @@ def main(argv=None):
         log(f"-> {ofile}")
 
     if {"sigma", "rates"} & set(stages) and ofile.exists():
-        cs = db.CollisionStrengths.load(ofile)
+        cs = db.CollisionStrengths.load(ofile, partial_waves=False)
         lv, sig = excitation_sigma(cs, states)
         if "sigma" in stages:
             keep = sig if a.sigma_initial == "all" else \

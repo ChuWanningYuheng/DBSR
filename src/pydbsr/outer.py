@@ -464,13 +464,15 @@ class CollisionStrengths:
                             omega=self.omega, relativistic=self.relativistic, **extra)
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path, partial_waves: bool = True):
+        """``partial_waves=False``: skip Omega of every partial wave (the bulk of
+        a large file, needed only for convergence checks) - much faster."""
         d = np.load(path)
         get = lambda k: d[k] if k in d.files else None
         names = get("names")
         pw = get("pw")
         rel = get("relativistic")
-        return cls(d["energies"], d["thresholds"], d["two_j"], d["omega"], get("omega_pw"),
+        return cls(d["energies"], d["thresholds"], d["two_j"], d["omega"], get("omega_pw") if partial_waves else None,
                    None if pw is None else [tuple(x) for x in pw.tolist()],
                    None if names is None else names.tolist(),
                    bool(rel) if rel is not None else False)

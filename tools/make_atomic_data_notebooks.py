@@ -368,7 +368,7 @@ for b in sorted(nb.read_csv(RUNS / "ba2_bound" / "bound_states.csv"), key=lambda
 '''),
     md("## 4. Сечения линий 455.4, 493.4 и константы скоростей"),
     code('''
-cs = db.CollisionStrengths.load(W / f"omega_J{JMAX:g}.npz")
+cs = db.CollisionStrengths.load(W / f"omega_J{JMAX:g}.npz", partial_waves=False)
 tg = db.Target.load(W / "target")
 st = {s.name: s for s in tg.states if s.name in cs.names}
 name_of = {s.nist_label: n for n, s in st.items()}
@@ -532,7 +532,7 @@ for r in nb.read_csv(W / "transitions_E1.csv"):
 '''),
     md("## 2. σ(6s² → 6s6p ¹P₁): прямое против Fursa, с каскадами против Chen & Gallagher"),
     code('''
-cs = db.CollisionStrengths.load(W / f"omega_J{JMAX:g}.npz")
+cs = db.CollisionStrengths.load(W / f"omega_J{JMAX:g}.npz", partial_waves=False)
 tg = db.Target.load(W / "target")
 st = {s.name: s for s in tg.states if s.name in cs.names}
 lab = {n: s.nist_label for n, s in st.items()}
@@ -662,7 +662,7 @@ job.start()
 '''),
     code(JOB_STATUS),
     code('''
-cs = db.CollisionStrengths.load(W / f"omega_J{JMAX:g}.npz")
+cs = db.CollisionStrengths.load(W / f"omega_J{JMAX:g}.npz", partial_waves=False)
 tg = db.Target.load(W / "target")
 name = {s.nist_no: s.name for s in tg.states if s.nist_no and s.name in cs.names}   # номер Ванга -> состояние
 Ecm = {lv.no: lv.energy_cm for lv in ref.levels}
@@ -875,7 +875,7 @@ k_ext/k_Ванг и k_ext/k_05 по Te. Если 05 не досчитан, ег�
 """),
     code('''
 import csv
-cs = db.CollisionStrengths.load(W / f"omega_J{JMAX:g}.npz")
+cs = db.CollisionStrengths.load(W / f"omega_J{JMAX:g}.npz", partial_waves=False)
 def ext_sigma(i, j):
     E, s = cs.incident_energy(S[i].name), cs.sigma(S[i].name, S[j].name)
     m = np.isfinite(s) & (E > 0)
@@ -884,7 +884,7 @@ def thr(i, j):
     return (Ecm[j] - Ecm[i]) / nb.CM_PER_EV
 W05 = XE2_RUN if (XE2_RUN / f"omega_J{JMAX:g}.npz").exists() else RUNS / "xe2_wang_full"   # результат ноутбука 05
 f05 = W05 / f"omega_J{JMAX:g}.npz"
-cs05 = db.CollisionStrengths.load(f05) if f05.exists() else None
+cs05 = db.CollisionStrengths.load(f05, partial_waves=False) if f05.exists() else None
 if cs05:
     tg05 = db.Target.load(W05 / "target")
     n05 = {s.nist_no: s.name for s in tg05.states if s.nist_no and s.name in cs05.names}
