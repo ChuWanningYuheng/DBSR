@@ -872,6 +872,166 @@ reference.write_rates_xlsx(W / "xe2_k_cascade.xlsx", TEa, k_c, lab_c,
                            note="cascade: sum_h <sigma v>(i->h) P(h->u), cm3/s; ratio = cascade/direct; DBSR, model xe2_wang")
 print("->", W / "xe2_cascade_P.csv", W / "xe2_k_cascade.xlsx")
 '''),
+    md("""
+## 5. Набор k с поправкой по спектру (третий набор для CRM)
+
+Для переходов m → u, у которых настоящая сила линии известна (ваш спектр — в приоритете,
+иначе NIST, раздел 3б), наше k(m→u) умножается на A_истинное / A_наш. Это поправка
+дипольной части сечения: точна при больших энергиях, у порога — приближённо (там вклад
+обмена и резонансов не масштабируется). Для остальных пар k не меняются — берите их из
+`rates_xe2_wang.xlsx`.
+
+В CRM: три набора k(метастабиль → 6p) — Ванг, наш, наш с поправкой. Разброс ne по ним —
+неопределённость от атомных данных; поправленный набор лучше всего согласован с вашим спектром.
+"""),
+    code('''
+k_cor, lab_cor, cor_rows = {}, {}, []
+for (u, m), a in sorted(A_our.items()):
+    if m not in M or u not in nb.XE2_UPPERS or Ecm[m] >= Ecm[u] or not a:
+        continue
+    f_true = meas.get((u, m)) or (A_nist[(u, m)] / a if (u, m) in A_nist else None)
+    if not f_true:
+        continue
+    src = "спектр" if (u, m) in meas else "NIST"
+    k_cor[(m, u)] = f_true * k_pair(m, u)
+    lab_cor[(m, u)] = f"{m}->{u}"
+    cor_rows.append(dict(m=m, u=u, factor=f_true, source=src))
+    show_k(f"{m}->{u} ×{f_true:.2f} ({src})", k_cor[(m, u)])
+reference.write_rates_xlsx(W / "xe2_k_corrected.xlsx", TEa, k_cor, lab_cor,
+                           note="<sigma v> (cm3/s), m->u: DBSR (xe_plus_v2) x A_true/A_DBSR (A_true: branching measured "
+                                "from the spectra, else NIST); other pairs: rates_xe2_wang.xlsx")
+with open(W / "xe2_k_corrected_factors.csv", "w", newline="") as fh:
+    wr = csv.DictWriter(fh, fieldnames=list(cor_rows[0])); wr.writeheader(); wr.writerows(cor_rows)
+print("->", W / "xe2_k_corrected.xlsx", W / "xe2_k_corrected_factors.csv")
+'''),
+    md("""
+## 6. Поиск ne-пар, устойчивых к выбору атомных данных
+
+Для каждой видимой линии Xe II (спектр A3: не в бленде, не насыщена хотя бы в одном листе,
+S/N ≥ `SN_MIN`; таблица `docs/crm/criteria_A3.csv`) с верхним уровнем u из 6p:
+
+* «рычаг метастабилей» L(u) = Σ_m w_m k(m→u) / k(1→u), m — `LEVER_SET` (метастабили и
+  долгоживущий уровень 4, у которых σ есть и у Ванга, и у нас); w_m — относительные веса
+  (по умолчанию равные; если ваша CRM даёт заселённости, поставьте их);
+* «наклон» s(u) = d ln k(1→u) / d ln Te между `TE_PAIR` и 2·`TE_PAIR`.
+
+Хорошая ne-пара (a, b): (1) **чувствительна** — L(a)/L(b) далеко от 1 в обоих наборах;
+(2) **нечувствительна к Te** — наклоны близки; (3) **устойчива** — наше L(a)/L(b) и Ванговское
+L(a)/L(b) близки, т. е. ответ не зависит от того, чьи сечения взять. Столбцы: `чувств.` =
+min(|ln L_a/L_b|) по двум наборам, `расхожд.` = |ln (L_a/L_b)_наш − ln (L_a/L_b)_Ванг|,
+`Δнаклон`, `Δλ` (нм; чем меньше, тем меньше нужна калибровка), доля «6s» в рычаге — сколько
+дают уровни 6s (там наборы согласны, раздел 3б).
+"""),
+    code('''
+TE_PAIR = 1.0                  # эВ
+SN_MIN = 50
+LEVER_SET = [m for m in (2, 4, 7, 10, 12, 22) if m in name]
+LEVER_W = {m: 1.0 for m in LEVER_SET}           # веса метастабилей (заселённости относительно основного)
+SIX_S = {m for m in LEVER_SET if ")6s" in ref.label(m)}
+TE2 = np.array([TE_PAIR, 2 * TE_PAIR])
+
+def k_both(i, u):
+    """(k_наш, k_Ванг) на TE2 или None, если у Ванга нет σ."""
+    if (i, u) not in ref.sigma:
+        return None
+    Ew, sw = ref.sigma[(i, u)]
+    kd = rates.rates_on_grid(*dbsr_sigma(i, u), TE2, thr(i, u))
+    kw = rates.rates_on_grid(Ew, sw, TE2, thr(i, u))
+    return kd, kw
+
+crit = [r for r in nb.read_csv(NIST / "criteria_A3.csv")
+        if r["ion"] == "XeII" and r["upper_no"] and int(r["upper_no"]) in name and ")6p" in ref.label(int(r["upper_no"]))
+        and not r["nist_within_1.5fwhm"]]
+def best_sn(r):
+    v = [nb.fnum(r[k]) for k in r if k.endswith("_S/N") and r[k]]
+    return max(v) if v else 0.0
+def n_unsat(r):
+    return sum(1 for k in r if k.endswith("_sat") and r[k.replace("_sat", "_S/N")] and r[k] != "SAT")
+crit = [r for r in crit if best_sn(r) >= SN_MIN and n_unsat(r) > 0]
+lever = {}
+for u in sorted({int(r["upper_no"]) for r in crit}):
+    k1 = k_both(1, u)
+    if k1 is None:
+        continue
+    terms = {m: k_both(m, u) for m in LEVER_SET if Ecm[m] < Ecm[u]}
+    if any(t is None for t in terms.values()):
+        continue
+    LD = sum(LEVER_W[m] * terms[m][0][0] for m in terms) / k1[0][0]
+    LW = sum(LEVER_W[m] * terms[m][1][0] for m in terms) / k1[1][0]
+    share6s = sum(LEVER_W[m] * terms[m][0][0] for m in terms if m in SIX_S) / (LD * k1[0][0])
+    sD = np.log(k1[0][1] / k1[0][0]) / np.log(2.0)
+    sW = np.log(k1[1][1] / k1[1][0]) / np.log(2.0)
+    lever[u] = dict(LD=LD, LW=LW, s=(sD + sW) / 2, sD=sD, sW=sW, six_s=share6s)
+lines_c = [r for r in crit if int(r["upper_no"]) in lever]
+print(f"линий-кандидатов: {len(lines_c)}, верхних уровней: {len(lever)}")
+for u, v in sorted(lever.items()):
+    print(f"  {u:3d} {ref.label(u):30s} L_наш = {v['LD']:9.2e}  L_Ванг = {v['LW']:9.2e}  наклон = {v['s']:5.2f}"
+          f"  доля 6s = {v['six_s']:.2f}")
+pairs = []
+for ia, a in enumerate(lines_c):
+    for b in lines_c[ia + 1:]:
+        ua, ub = int(a["upper_no"]), int(b["upper_no"])
+        if ua == ub:
+            continue
+        la, lb = lever[ua], lever[ub]
+        rD, rW = np.log(la["LD"] / lb["LD"]), np.log(la["LW"] / lb["LW"])
+        pairs.append(dict(line_a=float(a["wl_nm"]), up_a=ua, line_b=float(b["wl_nm"]), up_b=ub,
+                          sens=min(abs(rD), abs(rW)) if rD * rW > 0 else 0.0, disagree=abs(rD - rW),
+                          dslope=abs(la["s"] - lb["s"]), dwl=abs(float(a["wl_nm"]) - float(b["wl_nm"])),
+                          six_s_a=la["six_s"], six_s_b=lb["six_s"],
+                          sn_a=best_sn(a), sn_b=best_sn(b)))
+good = {}
+for p in pairs:                       # одна пара линий на пару уровней: ближайшая по λ
+    if p["sens"] > np.log(2) and p["dslope"] < 0.5:
+        key = frozenset((p["up_a"], p["up_b"]))
+        if key not in good or p["dwl"] < good[key]["dwl"]:
+            good[key] = p
+good = sorted(good.values(), key=lambda p: (p["disagree"] / p["sens"], p["dwl"]))
+print(f"\\nпар линий: {len(pairs)}; пар уровней, чувствительных (L_a/L_b > 2 в обоих наборах) и с Δнаклон < 0.5:"
+      f" {len(good)} (лучшие сверху: малое расхождение наборов при большой чувствительности)")
+print(f"{'линия a':>9s} {'ур.':>4s} {'линия b':>9s} {'ур.':>4s} {'чувств.':>7s} {'расхожд.':>8s} {'Δнаклон':>7s}"
+      f" {'Δλ':>6s} {'6s a/b':>9s}")
+for p in good[:25]:
+    print(f"{p['line_a']:9.3f} {p['up_a']:4d} {p['line_b']:9.3f} {p['up_b']:4d} {p['sens']:7.2f} {p['disagree']:8.2f}"
+          f" {p['dslope']:7.2f} {p['dwl']:6.1f} {p['six_s_a']:4.2f}/{p['six_s_b']:4.2f}")
+ref_pair = [p for p in pairs if {p["line_a"], p["line_b"]} == {561.667, 545.045}]
+if ref_pair:
+    p = ref_pair[0]
+    print(f"\\nдля сравнения, текущая пара 561.667/545.045: чувств. {p['sens']:.2f}, расхожд. {p['disagree']:.2f},"
+          f" Δнаклон {p['dslope']:.2f}")
+with open(W / "xe2_ne_pairs.csv", "w", newline="") as fh:
+    wr = csv.DictWriter(fh, fieldnames=list(pairs[0])); wr.writeheader(); wr.writerows(sorted(pairs, key=lambda p: -p["sens"]))
+print("->", W / "xe2_ne_pairs.csv")
+'''),
+    md("""
+## 7. Таблица линий для общей подгонки
+
+Все линии-кандидаты раздела 6 (видимые, без бленд, не насыщены хотя бы в одном листе A3) с
+данными, нужными CRM: ветвление (DBSR; измеренное, где есть), согласие двух форм A (vel/len),
+k(1→u) и рычаг метастабилей в обоих наборах, наклон. Подгонка по всем линиям сразу:
+неизвестные ne, Te (и плотность ионов как общий множитель); минимизируется сумма
+[ln(I_изм/I_CRM)]² по линиям с весами 1/σ². Линии, которые систематически не ложатся, —
+признак плохих атомных данных для их верхнего уровня (смотрите `vel/len` и `BR_источник`).
+"""),
+    code('''
+fit_rows = []
+for r in sorted(lines_c, key=lambda r: float(r["wl_nm"])):
+    u, lo = int(r["upper_no"]), int(r["lower_no"]) if r["lower_no"] else None
+    brd = br.get(u, {}).get(lo) if lo else None                    # ветвление DBSR (раздел 2)
+    ratio = meas.get((u, lo)) if lo else None                      # A_истинное / A_наш по спектру
+    g = gauge.get((u, lo)) if lo else None
+    fit_rows.append(dict(wl_nm=float(r["wl_nm"]), upper=u, upper_label=ref.label(u), lower=lo,
+                         lower_label=ref.label(lo) if lo else "", BR_dbsr=brd,
+                         BR_best=brd * ratio if (brd and ratio) else brd,
+                         BR_source="спектр" if ratio else "DBSR", vel_len=g,
+                         A_reliable=(g is not None and 0.7 < g < 1.4),
+                         lever_our=lever[u]["LD"], lever_wang=lever[u]["LW"], Te_slope=lever[u]["s"],
+                         best_SN=best_sn(r), n_unsaturated_sheets=n_unsat(r)))
+with open(W / "xe2_lines_for_fit.csv", "w", newline="") as fh:
+    wr = csv.DictWriter(fh, fieldnames=list(fit_rows[0])); wr.writeheader(); wr.writerows(fit_rows)
+print(f"{len(fit_rows)} линий ->", W / "xe2_lines_for_fit.csv")
+print("из них с надёжной A (0.7 < vel/len < 1.4):", sum(r["A_reliable"] for r in fit_rows))
+'''),
 ])
 
 # ====================================================================== 06 Xe II: extended model
