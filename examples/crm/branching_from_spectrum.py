@@ -60,8 +60,10 @@ def main(argv=None):
     nd = Path(a.nist_dir)
 
     # segments and their wavelength offsets
+    from scipy.ndimage import median_filter
     dw = np.diff(w)
-    starts = np.r_[w[0], w[1:][np.abs(dw - np.median(dw)) > 0.2 * np.median(dw)]]
+    loc = median_filter(dw, 101, mode="nearest")              # the step changes along the spectrum (13 -> 5 pm)
+    starts = np.r_[w[0], w[1:][np.abs(dw - loc) > 0.45 * loc]]
     starts = starts[np.r_[True, np.diff(starts) > 5.0]]           # joins only, not rounding steps
     seg = lambda lam: int(np.searchsorted(starts, lam, "right")) - 1
     sh = {}
