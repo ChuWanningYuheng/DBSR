@@ -2,7 +2,8 @@
 ne/Te diagnostic from the neutral atom, whose atomic data are better known than those of Xe+).
 
 For every Xe I line of NIST ASD (docs/crm/nist_XeI.csv) inside the spectrum it reports the
-Gaussian fit in each sheet (amplitude, S/N, saturation), the Paschen labels of the levels
+Gaussian fit in each sheet (amplitude, S/N, saturation; the wavelength error of the stitched
+spectrum is measured locally on strong isolated Xe I/II lines), the Paschen labels of the levels
 (5p5 6s = 1s5..1s2, 5p5 6p = 2p10..2p1 in order of decreasing energy) and lines of the other
 species (Xe I/II/III, Ba I/II, W, Ca, Al) within +-1.5 FWHM.
 
@@ -62,6 +63,35 @@ def paschen(lines):
     return lab
 
 
+def calibration(w, I, refs, isolation=0.3, half=12.0):
+    """Wavelength error of the stitched spectrum near each wavelength (nm): the spectrum is
+    made of ~25 nm pieces, each with its own scale error (-30 ... -190 pm in these spectra).
+    Measured on strong isolated lines ``refs`` (NIST wavelengths): the highest point within
+    [wl - 0.25, wl + 0.05]; returns a function wl -> median error of the reference lines
+    within +-``half`` nm (global median where there are none)."""
+    refs = sorted(refs)
+    pts = []
+    for k, wl in enumerate(refs):
+        if (k and wl - refs[k - 1] < isolation) or (k + 1 < len(refs) and refs[k + 1] - wl < isolation):
+            continue
+        m = (w > wl - 0.25) & (w < wl + 0.05)
+        if m.sum() < 5:
+            continue
+        j = np.flatnonzero(m)[np.argmax(I[m])]
+        bg = np.percentile(I[(w > wl - 1.0) & (w < wl + 1.0)], 25)
+        if I[j] > 5 * bg:
+            pts.append((wl, w[j] - wl))
+    if not pts:
+        return lambda wl: -0.06
+    x, d = np.array(pts).T
+    glob = float(np.median(d))
+
+    def shift(wl):
+        near = np.abs(x - wl) < half
+        return float(np.median(d[near])) if near.sum() >= 2 else glob
+    return shift
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--spectrum", required=True)
@@ -79,16 +109,25 @@ def main(argv=None):
         if f.exists():
             others += read_nist(f, sp)
     sheets = read_sheets(a.spectrum)
+    # reference lines for the wavelength scale: strong Xe I and Xe II lines with A in NIST
+    xe_all = [o for o in others if o["sp"] in ("XeI", "XeII")]
+    refs = [o["wl"] for o in xe_all if o["A"] and o["A"] > 5e6
+            and not any(abs(p["wl"] - o["wl"]) < 0.3 and p is not o for p in others)]
+    calib = {name: calibration(w, I, refs) for name, (w, I) in sheets.items()}
     rows = []
     for x in sorted(xe1, key=lambda x: x["wl"]):
         res = {}
         for name, (w, I) in sheets.items():
             if w.min() + 0.2 < x["wl"] < w.max() - 0.2:
-                res[name] = fit_line(w, I, x["wl"])
-        res = {k: v for k, v in res.items() if v}
+                d = calib[name](x["wl"])
+                res[name] = fit_line(w, I, x["wl"], shift=(d - 0.04, d + 0.04))
+        # only plausible fits: width near the instrument width, centre near the NIST wavelength
+        res = {k: v for k, v in res.items() if v and v["amp"] > 0 and abs(v["centre"] - x["wl"]) < 0.25
+               and (v["saturated"] or (np.isfinite(v["fwhm"]) and 0.4 * FWHM < v["fwhm"] < 3 * FWHM))}
         if not res:
             continue
-        best = max(res.values(), key=lambda r: r["sn"] if np.isfinite(r["sn"]) else -1)
+        pool = [r for r in res.values() if not r["saturated"]] or list(res.values())   # S/N по ненасыщенным листам
+        best = max(pool, key=lambda r: r["sn"] if np.isfinite(r["sn"]) else -1)
         if not (best["sn"] >= a.min_sn):
             continue
         near = [o for o in others if abs(o["wl"] - x["wl"]) < 1.5 * FWHM
