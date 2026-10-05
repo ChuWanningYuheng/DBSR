@@ -93,9 +93,13 @@ code("""
 # ---------- 3. ход расчёта (запускайте когда хотите)
 import re
 txt = LOG.read_text(errors="replace") if LOG.exists() else ""
-done = [l for l in txt.splitlines() if "partial wave" in l]
+scat = WORK / "scat"
+waves = sorted(int(f.name[4:]) for f in scat.glob("cfg.[0-9][0-9][0-9]"))
+ready = {int(f.name[2:]) for f in scat.glob("h.[0-9][0-9][0-9]")}
+failed = sorted({int(m) for m in re.findall(r"klsp=(\\d+)", txt)} - ready)
 print("идёт" if running() else "НЕ идёт (закончен или упал)")
-print(f"парциальных волн готово: {sum('done in' in l for l in done)}, упало: {sum('FAILED' in l for l in done)}")
+print(f"парциальных волн готово (файлы h.nnn): {len(ready)} из {len(waves)}")
+print("не готовы:", [k for k in waves if k not in ready] or "нет", "| упали в этом запуске:", failed or "нет")
 print("\\n".join(txt.splitlines()[-15:]))
 """)
 
