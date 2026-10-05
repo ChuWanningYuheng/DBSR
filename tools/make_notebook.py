@@ -136,7 +136,7 @@ ref = reference.read_xlsx(XLSX)
 ofile = WORK / "compare" / f"omega_J{JMAX:g}_E{EMAX:g}_dE{DE:g}.npz"
 cs = db.CollisionStrengths.load(ofile)
 tg = db.Target.load(WORK / "target")
-db.nist.assign(tg.states, ref.levels, verbose=False)
+db.nist.assign(tg.states, ref.levels, verbose=False, method="config")
 name_of = {s.nist_no: s.name for s in tg.states if s.nist_no is not None and s.name in cs.names}
 print(ofile.name, "|", len(cs.names), "состояний,", len(cs.pw or []), "парциальных волн,",
       f"E до {cs.energies.max():.0f} эВ")

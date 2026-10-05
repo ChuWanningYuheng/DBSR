@@ -1,0 +1,7 @@
+line_nm,upper,n_spectra,spectra,BR_corr_median,BR_corr_min,BR_corr_max,BR_vis_median,unseen_dbsr,BR_dbsr,BR_dbsr_nist
+543.896,39,10,A15_data1 A1_data1 A1_data2 A25_a_data1 A25_b_data1 A3_data10 A3_data11 A3_data3 A3_data5 A3_data8,0.639,0.5218,0.6495,0.6811,0.11,0.4015,0.4503
+545.045,44,10,A15_data1 A1_data1 A1_data2 A25_a_data1 A25_b_data1 A3_data10 A3_data11 A3_data3 A3_data5 A3_data8,0.0556,0.0513,0.0686,0.0774,0.28,0.0002,0.0002
+545.09,51,10,A15_data1 A1_data1 A1_data2 A25_a_data1 A25_b_data1 A3_data10 A3_data11 A3_data3 A3_data5 A3_data8,0.0136,0.0128,0.0145,0.0213,0.4,0.0372,0.0372
+553.107,29,2,A3_data10 A3_data11,0.0887,0.0881,0.0892,0.1051,0.16,0.0323,0.092
+557.219,42,9,A15_data1 A1_data1 A25_a_data1 A25_b_data1 A3_data10 A3_data11 A3_data3 A3_data5 A3_data8,0.0265,0.0186,0.0277,0.0279,0.05,0.0196,0.0184
+561.667,41,7,A15_data1 A1_data1 A1_data2 A3_data10 A3_data11 A3_data5 A3_data8,0.0486,0.0468,0.0544,0.054,0.1,0.0484,0.0554
