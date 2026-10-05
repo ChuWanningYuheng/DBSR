@@ -66,7 +66,8 @@ def _asd_params(spectrum: str, fmt: int) -> dict:
 def fetch_levels(spectrum: str | Ion, cache: bool = True, timeout: float = 60) -> list[Level]:
     """Download energy levels of ``spectrum`` (e.g. ``'Xe II'`` or ``Ion('Xe', 1)``) in cm-1.
 
-    Tries the tab-delimited, CSV and ASCII outputs of the NIST ASD levels form.
+    Order: the cache, the copy shipped with pydbsr (``data/nist_levels``: Ba I, Ba II,
+    Xe I, Xe II, Xe III), then the tab-delimited, CSV and ASCII outputs of the NIST ASD levels form.
     If NIST answers with an HTML page instead of a table (maintenance, access
     restrictions), a RuntimeError explains how to download the table by hand.
     """
@@ -78,6 +79,11 @@ def fetch_levels(spectrum: str | Ion, cache: bool = True, timeout: float = 60) -
         if levels:
             return levels
         fname.unlink()                                     # bad cache from an old version
+    shipped = Path(__file__).parent / "data" / "nist_levels" / fname.name   # copy shipped with pydbsr
+    if shipped.exists():                                   # (servers without access to NIST)
+        levels = parse_levels(shipped.read_text())
+        if levels:
+            return levels
     answers = []
     for fmt in (3, 2, 1):
         url = ASD_URL + "?" + urllib.parse.urlencode(_asd_params(spectrum, fmt))
