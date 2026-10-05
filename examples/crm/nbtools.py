@@ -247,3 +247,19 @@ def fursa(name):
     v = np.array([np.nan if x is None else x for x in FURSA_TABLES[name]], float)
     m = np.isfinite(v)
     return FURSA_E[m], v[m] * 1e-16
+
+
+# ---------------------------------------------------------------- Pace & Hooper 1973 (PRA 7, 2033), Ba+
+# Absolute EMISSION cross sections (1e-16 cm2) of the Ba II resonance lines by electron impact on Ba+ 6s:
+# photons of the line per collision = direct excitation of 6p x branching + cascades (6d, 7s -> 6p),
+# not corrected for cascades.  Table X: 455.4 nm (6p 2P3/2 -> 6s), at and below 8 eV absolute, above
+# 8 eV relative data of Bacon (1969) normalised at 8 eV.  Table XI: 493.4 nm (6p 2P1/2 -> 6s), relative
+# data of Bacon normalised to Table X.  err: total uncertainty, % (upper bound where asymmetric).
+PACE_HOOPER = {
+    455.403: dict(E=np.array([3, 4, 6, 8, 18, 28, 38, 48, 58, 68, 78, 88, 98.0]),
+                  sigma=np.array([41.2, 28.9, 18.3, 15.8, 11.6, 9.5, 8.2, 7.3, 6.7, 5.9, 5.5, 5.0, 4.5]),
+                  err=np.array([41, 43, 41, 41, 21, 21, 22, 24, 24, 25, 25, 26, 27.0])),
+    493.408: dict(E=np.array([8, 18, 28, 38, 48, 58, 68, 78, 88, 98.0]),
+                  sigma=np.array([8.0, 5.9, 4.8, 4.1, 3.7, 3.4, 3.0, 2.8, 2.5, 2.3]),
+                  err=np.array([41, 31, 31, 32, 34, 34, 31, 31, 32, 33.0])),
+}

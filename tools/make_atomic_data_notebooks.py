@@ -432,6 +432,46 @@ reference.write_rates_xlsx(W / "ba2_k_line_scaledS.xlsx", TEa, k_s, lab_l,
                            note="as ba2_k_line; from 6s scaled by S_NIST/S_DBSR of 6s-6p (no core polarisation in the model)")
 print("->", W / "ba2_line_sigma_scaledS.xlsx", W / "ba2_k_line_scaledS.xlsx")
 '''),
+    md("""
+## 6. Сравнение с экспериментом Pace & Hooper (1973)
+
+Pace, Hooper, Phys. Rev. A 7, 2033 (1973) измерили **сечения испускания** линий 455.4 и
+493.4 нм при ударе электронов по Ba⁺ 6s (`nb.PACE_HOOPER`, табл. X и XI; погрешность
+21–43 %). В сечение испускания входит всё, что даёт фотон линии:
+σ_исп = BR · [σ(6s→6p_j) + Σ_h σ(6s→h)·P(h→6p_j)], где P(h→u) — доля распадов уровня h
+(7s, 6d, …), проходящих через u (ветвления DBSR E1 этого расчёта), BR — NIST.
+Сравниваем то же самое: прямое, с каскадами, с каскадами и поправкой S (раздел 5).
+"""),
+    code('''
+br_e1, _, _ = nb.branching_from_csv(W / "transitions_E1.csv")
+P = nb.cascade_prob(br_e1)
+by_no = {s.nist_no: n for n, s in st.items()}
+i0 = by_no[1]
+E0 = cs.incident_energy(i0)
+fig, axs = plt.subplots(1, 2, figsize=(11, 4))
+for ax, x in zip(axs, [x for x in nb.BA_LINES if x["ion"] == "Ba II"]):
+    u = name_of[x["upper"]]; un = st[u].nist_no
+    direct = np.nan_to_num(cs.sigma(i0, u))
+    casc = sum(np.nan_to_num(cs.sigma(i0, by_no[h])) * p.get(un, 0.0)
+               for h, p in P.items() if h in by_no and p.get(un, 0.0) > 0)
+    f = ratio.get(x["upper"], 1.0)
+    m = E0 > 0
+    ax.plot(E0[m], x["branching"] * direct[m] / 1e-16, lw=0.7, label="DBSR, прямое")
+    ax.plot(E0[m], x["branching"] * (direct + casc)[m] / 1e-16, lw=0.9, label="DBSR + каскады")
+    ax.plot(E0[m], x["branching"] * (f * direct + casc)[m] / 1e-16, lw=0.9, ls="--", label="DBSR + каскады, S → NIST")
+    ph = nb.PACE_HOOPER[x["wl"]]
+    ax.errorbar(ph["E"], ph["sigma"], yerr=ph["sigma"] * ph["err"] / 100, fmt="ko", ms=4, label="Pace, Hooper 1973")
+    ax.set_xscale("log"); ax.set_title(f"{x['wl']} нм"); ax.set_xlabel("E, эВ"); ax.set_ylabel("σ испускания, 10⁻¹⁶ см²")
+    print(f"\\n{x['wl']} нм:   E, эВ   эксп.   DBSR+касц/эксп.   (с поправкой S)/эксп.")
+    for e, sp in zip(ph["E"], ph["sigma"]):
+        k = np.argmin(abs(E0 - e))
+        if E0[k] <= 0 or abs(E0[k] - e) > 0.5:
+            continue
+        a = x["branching"] * (direct + casc)[k] / 1e-16
+        b = x["branching"] * (f * direct + casc)[k] / 1e-16
+        print(f"            {e:6.1f}  {sp:6.1f}   {a / sp:8.2f}            {b / sp:8.2f}")
+axs[0].legend(fontsize=7); fig.tight_layout(); plt.show()
+'''),
 ])
 
 # ====================================================================== 04 Ba I
