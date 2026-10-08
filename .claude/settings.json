@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash tools/gitlab_api.sh *)"
+    ]
+  }
+}
