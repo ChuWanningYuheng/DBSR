@@ -361,7 +361,10 @@ def partial_waves(nelc_target: int, jmax: float, jmin: float = None,
     tj_min = (1 if odd else 0) if jmin is None else int(round(2 * jmin))
     tj_max = int(round(2 * jmax))
     if (tj_min % 2 == 1) != odd or (tj_max % 2 == 1) != odd:
-        raise ValueError(f"J must be {'half-integer' if odd else 'integer'} for {nelc_target + 1} electrons")
+        kind = "half-integer (0.5, 1.5, ...)" if odd else "integer"
+        hint = tj_max if (tj_max % 2 == 1) == odd else (tj_max - 1 if tj_max >= 1 else tj_max + 1)
+        raise ValueError(f"J must be {kind} for {nelc_target + 1} electrons (target + 1): "
+                         f"got jmin={tj_min / 2:g}, jmax={jmax:g}; e.g. jmax={hint / 2:g}")
     return [(tj, p) for tj in range(tj_min, tj_max + 1, 2) for p in parities]
 
 

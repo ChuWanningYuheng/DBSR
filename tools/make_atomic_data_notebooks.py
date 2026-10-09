@@ -519,7 +519,7 @@ for t, k in zip(TEa, k_fursa):
     print(f"Te = {t:5.2f} эВ   BR·<σv> = {k:.3e} см3/с")
 '''),
     code('''
-JMAX = 0            # 0 (проверка), затем 15-25
+JMAX = 0.5          # e + Ba: 57 электронов, поэтому J полуцелые: 0.5 (проверка), затем 14.5 / 19.5 / 24.5
 job = nb.Job(RUNS / "ba1", "ba1", stage="all", jmax=JMAX, cores=CORES, mem=MEM, hd_threads=HD_THREADS,
              scratch=SCRATCH, scratch_gb=SCRATCH_GB, emax=40, de=0.005, te=",".join(map(str, TE)))
 job.start()
