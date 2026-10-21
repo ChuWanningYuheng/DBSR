@@ -201,17 +201,35 @@ class Scattering:
         channel pair (``STOP I cannot find orth.condition``) or misses it
         (singular overlap matrix: dbsr_hd3 ``DPOTRF ... failed``).
         Correlation orbitals (``correlation=``) are not added: the continuum is
-        made orthogonal to them anyway (``orth_conditions``).  The substitution
-        orbital of an added orbital is the orbital itself (one orbital set).
-        Idempotent; returns the number of added entries.  Run ``run_conf()``
-        afterwards if dbsr_conf3 has already been run.
+        made orthogonal to them anyway (``orth_conditions``).
+
+        An added orbital gets the substitution orbital that dbsr_prep3 gave it
+        elsewhere in ``target_orb``.  With several orbital sets (e.g. e + Ba:
+        the odd states have their own 5d, ``5d-2``, which dbsr_prep3 replaces by
+        the even ``5d-1``, overlap 0.975) this must be the same in every target
+        state; a different one makes dbsr_conf3 report 'troubles with
+        sustitution orbitals' and dbsr_mat3 impose orthogonality to the wrong
+        orbital (dbsr_hd3 ``DPOTRF ... failed``).  An orbital that dbsr_prep3
+        never replaced substitutes itself (one orbital set, e.g. Xe+ 5d-).
+        Entries written by older pydbsr with the wrong substitution orbital are
+        corrected.  Idempotent; returns the number of added or corrected
+        entries.  Run ``run_conf()`` afterwards if dbsr_conf3 has already been run.
         """
         path = self.workdir / "target_orb"
         if not path.exists():
             return 0
         corr = {_norm_orb(sh) for s in self.states for sh in (s.correlation_orbitals or [])}
         lines = path.read_text().splitlines()
-        out, added, it, have = [], 0, None, []
+        sub = {}                            # orbital -> (substitution, overlap) as given by dbsr_prep3
+        it = None
+        for line in lines:
+            if line.startswith("target"):
+                it = True
+            elif line.startswith("*"):
+                it = None
+            elif it and len(line) >= 23 and line[18:23] != line[:5]:
+                sub[line[:5]] = (line[18:23], line[23:].strip())
+        out, added, fixed, it, have = [], 0, 0, None, []
         for line in lines:
             if line.startswith("target"):
                 it, have = int(line.split()[1]), []
@@ -220,16 +238,23 @@ class Scattering:
                 for orb, q in occ.items():
                     if orb in have or _norm_orb(orb) in corr:
                         continue
-                    out.append(f"{orb:5s}{q:8.1f}     {orb:5s}{1.0:8.3f}")
+                    s, ovl = sub.get(orb, (orb, f"{1.0:.3f}"))
+                    out.append(f"{orb:5s}{q:8.1f}     {s:5s}{ovl:>8s}")
                     added += 1
                 it = None
             elif it is not None and line.strip():
-                have.append(line[:5])
+                orb = line[:5]
+                have.append(orb)
+                if len(line) >= 23 and line[18:23] == orb and orb in sub:
+                    s, ovl = sub[orb]
+                    line = f"{line[:18]}{s:5s}{ovl:>8s}"
+                    fixed += 1
             out.append(line)
-        if added:
+        if added or fixed:
             path.write_text("\n".join(out) + "\n")
-            self._log(f"target_orb: {added} physical orbital(s) of non-leading CSFs added")
-        return added
+            self._log(f"target_orb: {added} physical orbital(s) of non-leading CSFs added, "
+                      f"{fixed} substitution orbital(s) corrected")
+        return added + fixed
 
     def run_conf(self):
         self._log("dbsr_conf3")

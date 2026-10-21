@@ -68,3 +68,36 @@ def test_complete_target_orb(tmp_path):
     assert lines[-2] == " 5d-1     0.3      5d-1   1.000"
     assert lines[-1] == "*"
     assert sc.complete_target_orb() == 0                     # idempotent
+
+
+def test_complete_target_orb_two_orbital_sets(tmp_path):
+    """An added orbital of the second set gets the substitution orbital dbsr_prep3 gave it
+    in another state (5d-2 -> 5d-1, e + Ba); older entries 5d-2 -> 5d-2 are corrected."""
+    (tmp_path / "targ_001.c").write_text(
+        "Core subshells:  -7446.0\n  1s\nPeel subshells:\n 6s 1 6p-2 5d-2\nCSF(s):\n"
+        " 6s 1( 1) 6p-2( 1)                                                          0.90\n"
+        "                          1      1/2\n                                    1-\n"
+        " 5d-2( 1) 6p-2( 1)                                                          0.43\n"
+        "                          3/2    1/2\n                                    1-\n"
+        "*\n")
+    (tmp_path / "targ_002.c").write_text(
+        "Core subshells:  -7446.0\n  1s\nPeel subshells:\n 6p-2 5d-2\nCSF(s):\n"
+        " 5d-2( 1) 6p-2( 1)                                                          1.00\n"
+        "                          3/2    1/2\n                                    1-\n"
+        "*\n")
+    pad = " " * 60
+    old = (f"target   001      a{pad}\n 6s 1     1.0      6s 1   1.000\n 6p-2     1.0      6p-2   1.000\n"
+           " 5d-2     0.2      5d-2   1.000\n*\n"
+           f"target   002      b{pad}\n 6p-2     1.0      6p-2   1.000\n 5d-2     1.0      5d-1   0.975\n*\n")
+    (tmp_path / "target_orb").write_text(old)
+    s = State("a", "6s 6p", "", 1, -1, 0.0)
+    sc = Scattering([s], tmp_path, ion=Ion("Ba", 0), jmax=0.5, progress=None)
+    assert sc.complete_target_orb() == 1                     # the older entry corrected
+    lines = (tmp_path / "target_orb").read_text().splitlines()
+    assert lines[3] == " 5d-2     0.2      5d-1   0.975"
+    assert sc.complete_target_orb() == 0
+    # fresh file from dbsr_prep3: the entry is added with the right substitution orbital
+    (tmp_path / "target_orb").write_text(old.replace(" 5d-2     0.2      5d-2   1.000\n", ""))
+    assert sc.complete_target_orb() == 1
+    lines = (tmp_path / "target_orb").read_text().splitlines()
+    assert lines[3] == " 5d-2     0.2      5d-1   0.975"
