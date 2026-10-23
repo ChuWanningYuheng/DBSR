@@ -224,7 +224,7 @@ class Target:
             varied: str | Sequence[str] | None = None,
             term: str = "LS", jj_varied: str = "none", ci: bool = False,
             correlation: Sequence[str] | str | None = None, mchf_varied: str | None = None,
-            mchf_max_it: int = 100, **hf_args) -> ConfigSpec:
+            mchf_max_it: int = 100, orbitals_from: str | None = None, **hf_args) -> ConfigSpec:
         """Add a configuration (only peel shells, e.g. ``'5s2 5p4 6p'``), or a list of
         configurations of the same parity that are treated together, with
         configuration interaction between them (e.g. ``['5s 5p6', '5s2 5p4 5d']``:
@@ -253,6 +253,17 @@ class Target:
         optimised and the reference orbitals are used as input, which keeps the
         orbital set compact and consistent (as in the DBSR examples).
 
+        ``orbitals_from``: name of an earlier configuration whose orbitals are
+        the input instead of the reference's; by default only the orbitals
+        absent from both are optimised.  This keeps ONE orbital set when two
+        parities share valence orbitals: e + Ba, odd ``['6s 6p', '5d 6p', ...]``
+        optimises 5d and 6p, the even ``['6s2', '6s 5d', '6p2', ...]`` with
+        ``orbitals_from`` = the odd name only adds 7s, 6d.  Two optimised
+        copies of 5d and 6p (one per parity) make the scattering channels
+        nearly linearly dependent in the low even partial waves (dbsr_hd3:
+        ``DPOTRF ... failed``).  That configuration is computed after the one
+        it takes the orbitals from.
+
         Shell names in ``varied`` are non-relativistic ('6p', '5d') and are
         expanded to both jj subshells ('6p-,6p'): in DBSR notation '6p' alone
         is only the p3/2 spinor, and a non-varied 6p1/2 stays at its crude
@@ -272,11 +283,17 @@ class Target:
         if any(s.name == name for s in self.specs):
             raise ValueError(f"duplicate name {name!r}")
         ref = self.specs[0] if self.specs else None
+        src = ref
+        if orbitals_from is not None:
+            src = next((s for s in self.specs if s.name == orbitals_from), None)
+            if src is None:
+                raise ValueError(f"orbitals_from={orbitals_from!r}: no such configuration (add it first)")
         if varied is None:
             if ref is None:
                 varied = "all"
             else:
-                ref_sh = {(n_, l) for c in _confs(ref) for n_, l, _ in io.parse_config(c)}
+                ref_sh = {(n_, l) for sp in {ref.name: ref, src.name: src}.values()
+                          for c in _all_confs(sp) for n_, l, _ in io.parse_config(c)}
                 new = []
                 for c in confs + corr:
                     new += [(n_, l) for n_, l, _ in io.parse_config(c) if (n_, l) not in ref_sh and (n_, l) not in new]
@@ -290,7 +307,7 @@ class Target:
         spec = ConfigSpec(conf=" + ".join(io.pretty_conf(c) for c in confs), name=name,
                           correlation=" + ".join(io.pretty_conf(c) for c in corr),
                           mchf_varied=expand_varied(mchf_varied or ""), mchf_max_it=mchf_max_it, varied=varied, term=term,
-                          jj_varied=jj_varied, inp=None if ref is None else f"{ref.name}.bsw",
+                          jj_varied=jj_varied, inp=None if src is None else f"{src.name}.bsw",
                           ci=ci, extra=hf_args)
         self.specs.append(spec)
         return spec
@@ -380,12 +397,19 @@ class Target:
             if progress:
                 progress(f"dbsr_hf: {ref.name} ({ref.conf}), reference")
             self._run_spec(ref)
-        others = [s for s in self.specs[1:] if need(s)]
-        if others:
+        # configurations whose input orbitals come from another one than the
+        # reference (orbitals_from) run after it: in rounds, each in parallel
+        todo = [s for s in self.specs[1:] if need(s)]
+        while todo:
+            waiting = {f"{t.name}.bsw" for t in todo}
+            ready = [s for s in todo if s.inp not in waiting]
+            if not ready:
+                raise RuntimeError("orbitals_from: circular dependence between " + ", ".join(s.name for s in todo))
             if progress:
-                progress("dbsr_hf: " + ", ".join(f"{s.name} ({s.conf})" for s in others))
+                progress("dbsr_hf: " + ", ".join(f"{s.name} ({s.conf})" for s in ready))
             with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-                list(pool.map(self._run_spec, others))
+                list(pool.map(self._run_spec, ready))
+            todo = [s for s in todo if s not in ready]
         self.states = self._split_states()
         self.save()
         return self.states

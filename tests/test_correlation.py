@@ -1,3 +1,4 @@
+import pytest
 from pydbsr import Ion
 from pydbsr.scattering import Scattering
 from pydbsr.structure import ConfigSpec, State, _correlation_orbitals
@@ -27,6 +28,19 @@ def test_superseded_reference(tmp_path):
     tg.add(["5s2 5p5", "5s2 5p4 6p"])
     assert tg.superseded() == {tg.specs[0].name}
     assert tg.specs[2].varied == "6p-,6p"
+
+
+def test_orbitals_from(tmp_path):
+    """e + Ba with one orbital set: the even states take 5d and 6p from the odd ones."""
+    from pydbsr import Ion, Target
+    tg = Target(Ion("Ba", 0), core="[Xe]", workdir=tmp_path)
+    tg.add("6s2")
+    odd = tg.add(["6s 6p", "5d 6p"])
+    even = tg.add(["6s2", "6s 5d", "6p2", "6s 6d"], orbitals_from=odd.name)
+    assert odd.varied == "6p-,6p,5d-,5d" and odd.inp == "6s2.bsw"
+    assert even.varied == "6d-,6d" and even.inp == f"{odd.name}.bsw"
+    with pytest.raises(ValueError):
+        tg.add("6s 7s", orbitals_from="nope")
 
 
 def test_cfg_orbitals_high_l(tmp_path):

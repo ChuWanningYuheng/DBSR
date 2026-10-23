@@ -84,10 +84,15 @@ def ba2(tdir, jobs=4, levels=None, corr=False, emax_ev=None):
 
 @model
 def ba1(tdir, jobs=4, levels=None, corr=False, emax_ev=4.1):
-    """Ba: two valence electrons above [Xe]; all states up to 4.1 eV (6s8p 1P1 at 4.04 eV)."""
+    """Ba: two valence electrons above [Xe]; all states up to 4.1 eV (6s8p 1P1 at 4.04 eV).
+
+    One orbital set: the odd states optimise 5d, 6p, 7p, 4f; the even states
+    take them over and add only 7s, 6d.  Targets made before 23.10.2026 had
+    a second 5d and 6p for the even states, and the even partial waves
+    J <= 3.5 stopped in dbsr_hd3 (DPOTRF): compute those in a new directory."""
     tg, done = _load_or_new(tdir, db.Ion("Ba", 0), "[Xe]", {"rmax": 50.0, "hmax": 0.5})
     if not done:
         tg.add("6s2")
-        tg.add(["6s2", "6s 5d", "5d2", "6p2", "6s 7s", "6s 6d"])
-        tg.add(["6s 6p", "5d 6p", "6s 7p", "6s 4f"])
+        odd = tg.add(["6s 6p", "5d 6p", "6s 7p", "6s 4f"])
+        tg.add(["6s2", "6s 5d", "5d2", "6p2", "6s 7s", "6s 6d"], orbitals_from=odd.name)
     return _finish(tg, levels or "Ba I", jobs, emax_ev)
