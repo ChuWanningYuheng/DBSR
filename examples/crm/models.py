@@ -83,16 +83,18 @@ def ba2(tdir, jobs=4, levels=None, corr=False, emax_ev=None):
 
 
 @model
-def ba1(tdir, jobs=4, levels=None, corr=False, emax_ev=4.1):
-    """Ba: two valence electrons above [Xe]; all states up to 4.1 eV (6s8p 1P1 at 4.04 eV).
+def ba1(tdir, jobs=4, levels=None, corr=False, emax_ev=4.0):
+    """Ba: two valence electrons above [Xe]; all states below 4.0 eV.
 
-    One orbital set: the odd states optimise 5d, 6p, 7p, 4f; the even states
-    take them over and add only 7s, 6d.  Targets made before 23.10.2026 had
-    a second 5d and 6p for the even states, and the even partial waves
-    J <= 3.5 stopped in dbsr_hd3 (DPOTRF): compute those in a new directory."""
+    The odd J=1 block has 7 CSFs (6s6p, 5d6p, 6s7p) and so 7 states.  With
+    all of them in the close coupling (the top one is NIST 6s7p 1P1 at
+    4.035 eV, computed ~0.8 eV too high) the channels T x kp span the same
+    (N+1)-electron functions twice (6s6p + 7p = 6s7p + 6p) and dbsr_hd3 stops
+    in the even partial waves J <= 3.5 (DPOTRF).  emax_ev = 4.0 leaves that
+    state out."""
     tg, done = _load_or_new(tdir, db.Ion("Ba", 0), "[Xe]", {"rmax": 50.0, "hmax": 0.5})
     if not done:
         tg.add("6s2")
-        odd = tg.add(["6s 6p", "5d 6p", "6s 7p", "6s 4f"])
-        tg.add(["6s2", "6s 5d", "5d2", "6p2", "6s 7s", "6s 6d"], orbitals_from=odd.name)
+        tg.add(["6s2", "6s 5d", "5d2", "6p2", "6s 7s", "6s 6d"])
+        tg.add(["6s 6p", "5d 6p", "6s 7p", "6s 4f"])
     return _finish(tg, levels or "Ba I", jobs, emax_ev)
