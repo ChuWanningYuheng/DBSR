@@ -355,6 +355,77 @@ def assign(states, levels: Sequence[Level] | str | Ion, overwrite: bool = True,
     return result
 
 
+_CSF_SHELL = re.compile(r"(\d+)([a-z])(-?)\s*\(\s*(\d+)\)")
+
+
+def _sl_fraction(cfile, n_s: int, n_l: int, l: int) -> float | None:
+    """Weight share of the j = l - 1/2 CSF among the two jj CSFs ns nl_j of a
+    state (None if the state has no weight in them)."""
+    cf = io.CFile.read(cfile)
+    if cf.weights is None:
+        return None
+    lsym = io.L_SYMBOLS[l]
+    wm = wp = 0.0
+    for (conf, _, _), w in zip(cf.csfs, cf.weights):
+        shells = _CSF_SHELL.findall(conf)
+        occ = [(int(n), ll, m, int(q)) for n, ll, m, q in shells]
+        if len(occ) != 2 or (n_s, "s", "", 1) not in occ:
+            continue
+        other = [o for o in occ if o[:2] != (n_s, "s")]
+        if len(other) != 1 or other[0][:2] != (n_l, lsym) or other[0][3] != 1:
+            continue
+        if other[0][2] == "-":
+            wm += w * w
+        else:
+            wp += w * w
+    return wm / (wm + wp) if wm + wp > 0 else None
+
+
+def check_sl_terms(states, workdir, verbose: bool = True) -> list[tuple]:
+    """Correct singlet/triplet labels of ``ns n'l`` levels with J = l (e.g.
+    Ba I 6s6d 1D2 / 3D2) from the composition of the states.
+
+    For one s electron and one l electron with J = l the pure LS states are
+    mixtures of the jj CSFs ns n'l_{l-1/2} and ns n'l_{l+1/2}: the singlet has
+    weight l/(2l+1) on j = l - 1/2, the triplet (l+1)/(2l+1).  :func:`assign`
+    matches in energy order and swaps the two NIST levels when the calculation
+    puts them in the opposite order; then the labels, NIST numbers and
+    experimental energies of the pair are exchanged here.  ``workdir`` is the
+    target directory with the ``name.c`` files.  Returns the swapped pairs."""
+    workdir = Path(workdir)
+    pat = re.compile(r"^(\d+)s\.(\d+)([a-z])\s+([13])([A-Z])\*?\s+J=(\d+)$")
+    groups: dict = {}
+    for s in states:
+        m = pat.match(s.nist_label or "")
+        if not m:
+            continue
+        n_s, n_l, lsym, mult, L, J = m.groups()
+        l = io.L_SYMBOLS.index(lsym)
+        if l == 0 or int(J) != l or io.L_SYMBOLS[l].upper() != L:
+            continue
+        groups.setdefault((int(n_s), int(n_l), l, s.parity), {})[mult] = s
+    swapped = []
+    for (n_s, n_l, l, _), pair in groups.items():
+        if set(pair) != {"1", "3"}:
+            continue
+        sing, trip = pair["1"], pair["3"]
+        fs = _sl_fraction(workdir / f"{sing.name}.c", n_s, n_l, l)
+        ft = _sl_fraction(workdir / f"{trip.name}.c", n_s, n_l, l)
+        if fs is None or ft is None:
+            continue
+        x1, x3 = l / (2 * l + 1), (l + 1) / (2 * l + 1)
+        if abs(fs - x3) + abs(ft - x1) < abs(fs - x1) + abs(ft - x3):
+            for attr in ("exp_energy_cm", "nist_no", "nist_label"):
+                a, b = getattr(sing, attr), getattr(trip, attr)
+                setattr(sing, attr, b)
+                setattr(trip, attr, a)
+            swapped.append((sing, trip))
+            if verbose:
+                warnings.warn(f"{n_s}s{n_l}{io.L_SYMBOLS[l]} J={l}: singlet/triplet labels exchanged by "
+                              f"composition (share of j = l - 1/2: {fs:.2f} / {ft:.2f}; singlet {x1:.2f}, triplet {x3:.2f})")
+    return swapped
+
+
 # ---------------------------------------------------------------------------
 # CSV export of levels
 # ---------------------------------------------------------------------------

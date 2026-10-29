@@ -7,7 +7,7 @@ assigned (thresholds), plus the states to use in the close-coupling run.
             (6d correlation orbital for the term dependence of 5d)
   xe2_ext   e + Xe+, Wang model + 5p4 6d, 7p, 4f: cascades into the 6p levels
   ba2       e + Ba+: 6s, 5d, 7s, 6d, 8s, 7d | 6p, 7p, 4f, 5f
-  ba1       e + Ba : 6s2, 6s5d, 5d2, 6p2, 6s7s, 6s6d | 6s6p, 5d6p, 6s7p, 6s4f
+  ba1       e + Ba : 6s2, 6s5d, 5d2, 6p2, 6s7s, 6s6d | 6s6p, 5d6p, 6s7p, 6s8p, 6s4f
 
 These are starting models without core polarisation: check the energies
 (target table) and the A-values (notebooks 01, 04, 05) before trusting the
@@ -38,6 +38,7 @@ def _finish(tg, levels, jobs, emax_ev=None):
     if not tg.states:
         tg.compute(jobs=jobs)
     db.nist.assign(tg.states, levels, verbose=False, method="config")
+    db.nist.check_sl_terms(tg.states, tg.workdir)
     tg.save()
     states = [s for s in tg.states if s.nist_no is not None]
     if emax_ev is not None:
@@ -83,18 +84,19 @@ def ba2(tdir, jobs=4, levels=None, corr=False, emax_ev=None):
 
 
 @model
-def ba1(tdir, jobs=4, levels=None, corr=False, emax_ev=4.0):
-    """Ba: two valence electrons above [Xe]; all states below 4.0 eV.
+def ba1(tdir, jobs=4, levels=None, corr=False, emax_ev=4.1):
+    """Ba: two valence electrons above [Xe]; all states up to 4.1 eV.
 
-    The odd J=1 block has 7 CSFs (6s6p, 5d6p, 6s7p) and so 7 states.  With
-    all of them in the close coupling (the top one is NIST 6s7p 1P1 at
-    4.035 eV, computed ~0.8 eV too high) the channels T x kp span the same
-    (N+1)-electron functions twice (6s6p + 7p = 6s7p + 6p) and dbsr_hd3 stops
-    in the even partial waves J <= 3.5 (DPOTRF).  emax_ev = 4.0 leaves that
-    state out."""
+    6s8p is in the odd CI although its states (>= 4.4 eV) stay out of the close
+    coupling: with all states of a complete CI block in the close coupling
+    (odd J=1 without 6s8p: 7 CSFs and 7 states up to 6s7p 1P1 at 4.035 eV) the
+    channels T x kp span the same (N+1)-electron functions twice
+    (6s6p + 7p = 6s7p + 6p) and dbsr_hd3 stops in the even partial waves
+    J <= 3.5 (DPOTRF).  Targets made before 30.10.2026 have no 6s8p: use
+    emax_ev = 4.0 with them (leaves 6s7p 1P1 out)."""
     tg, done = _load_or_new(tdir, db.Ion("Ba", 0), "[Xe]", {"rmax": 50.0, "hmax": 0.5})
     if not done:
         tg.add("6s2")
         tg.add(["6s2", "6s 5d", "5d2", "6p2", "6s 7s", "6s 6d"])
-        tg.add(["6s 6p", "5d 6p", "6s 7p", "6s 4f"])
+        tg.add(["6s 6p", "5d 6p", "6s 7p", "6s 8p", "6s 4f"])
     return _finish(tg, levels or "Ba I", jobs, emax_ev)

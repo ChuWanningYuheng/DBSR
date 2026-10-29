@@ -115,3 +115,28 @@ def test_complete_target_orb_two_orbital_sets(tmp_path):
     assert sc.complete_target_orb() == 1
     lines = (tmp_path / "target_orb").read_text().splitlines()
     assert lines[3] == " 5d-2     0.2      5d-1   0.975"
+
+
+def _sd_cfile(path, c_minus, c_plus):
+    """Minimal .c file of a 6s6d J=2 state with two jj CSFs."""
+    path.write_text(
+        "  -8135.53         J =  2\n  1s\nPeel subshells:\n 6s 1 6d-1 6d 1\nCSF(s):\n"
+        f"  6s ( 1)  6d-( 1)                                            {c_minus:.6f}\n"
+        "      1/2      3/2\n                 2+\n"
+        f"  6s ( 1)  6d ( 1)                                            {c_plus:.6f}\n"
+        "      1/2      5/2\n                 2+\n"
+        "*\n")
+
+
+def test_check_sl_terms(tmp_path):
+    """Ba I 6s6d J=2: the state with 0.6 weight on 6d- is the triplet."""
+    from pydbsr import nist
+    a = State("a", "6s 6d", "", 4, 1, -1.0, exp_energy_cm=30236.8, nist_label="6s.6d 1D J=2", nist_no=30)
+    b = State("b", "6s 6d", "", 4, 1, -0.9, exp_energy_cm=30750.7, nist_label="6s.6d 3D J=2", nist_no=32)
+    _sd_cfile(tmp_path / "a.c", 0.80, -0.59)     # 0.65 on 6d-: triplet-like
+    _sd_cfile(tmp_path / "b.c", -0.56, -0.77)    # 0.35 on 6d-: singlet-like
+    swapped = nist.check_sl_terms([a, b], tmp_path, verbose=False)
+    assert len(swapped) == 1
+    assert a.nist_label == "6s.6d 3D J=2" and a.exp_energy_cm == 30750.7 and a.nist_no == 32
+    assert b.nist_label == "6s.6d 1D J=2" and b.exp_energy_cm == 30236.8
+    assert nist.check_sl_terms([a, b], tmp_path, verbose=False) == []
